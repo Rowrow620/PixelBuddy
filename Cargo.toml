@@ -1,0 +1,33 @@
+[package]
+name = "pixelbuddy"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "A pixel art editor built in Rust"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+egui = "0.31"
+egui_extras = "0.31"
+image = { version = "0.25", default-features = false, features = ["png", "gif"] }
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"
+toml = "0.8"
+log = "0.4"
+env_logger = "0.11"
+palette = "0.7"
+crossbeam-channel = "0.5"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+arboard = "3"
+pollster = "0.3"
+
+# Optimize image crate in debug builds
+[profile.dev.package.image]
+opt-level = 3
