@@ -21,9 +21,23 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     }
                     ui.close_menu();
                 }
-                if ui.button("Export").clicked() {
+                if ui.button("Export PNG").clicked() {
                     if let Some(png_data) = io::png::export_document_to_png(&app.editor.document) {
                         io::trigger_export_png(png_data, app.io_handler.sender.clone());
+                    }
+                    ui.close_menu();
+                }
+                if ui.button("Export Animated GIF").clicked() {
+                    app.editor.save_current_frame();
+                    if let Some(gif_data) = io::gif::export_animation_to_gif(&app.editor.animation) {
+                        io::trigger_export_png(gif_data, app.io_handler.sender.clone());
+                    }
+                    ui.close_menu();
+                }
+                if ui.button("Export Sprite Sheet (PNG)").clicked() {
+                    app.editor.save_current_frame();
+                    if let Some(sheet_data) = io::spritesheet::export_spritesheet_png(&app.editor.animation) {
+                        io::trigger_export_png(sheet_data, app.io_handler.sender.clone());
                     }
                     ui.close_menu();
                 }

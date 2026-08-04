@@ -4,3 +4,4 @@ pub mod menu_bar;
 pub mod palette_panel;
 pub mod theme;
 pub mod toolbar;
+pub mod timeline_panel;

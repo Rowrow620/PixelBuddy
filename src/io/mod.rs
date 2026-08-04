@@ -1,4 +1,6 @@
 pub mod png;
+pub mod gif;
+pub mod spritesheet;
 
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use rfd::AsyncFileDialog;
