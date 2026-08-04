@@ -79,6 +79,29 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             }
         }
         
+        // Draw Onion Skin ghost overlay (previous/next frame previews)
+        if app.editor.animation.onion_skin_enabled && app.editor.animation.frames.len() > 1 {
+            let current_idx = app.editor.animation.current_frame_index;
+            let frame_count = app.editor.animation.frames.len();
+            
+            // Previous frame (ghost red tint)
+            let prev_idx = if current_idx == 0 { frame_count - 1 } else { current_idx - 1 };
+            let prev_canvas = app.editor.animation.frames[prev_idx].document.composite_preview();
+            let size = [prev_canvas.width() as usize, prev_canvas.height() as usize];
+            let image = egui::ColorImage::from_rgba_unmultiplied(size, prev_canvas.pixels());
+            let prev_tex = ctx.load_texture("onion_prev", image, egui::TextureOptions::NEAREST);
+            let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
+            painter.image(prev_tex.id(), canvas_rect, uv, Color32::from_rgba_unmultiplied(255, 120, 120, 90));
+
+            // Next frame (ghost blue tint)
+            let next_idx = (current_idx + 1) % frame_count;
+            let next_canvas = app.editor.animation.frames[next_idx].document.composite_preview();
+            let next_size = [next_canvas.width() as usize, next_canvas.height() as usize];
+            let next_image = egui::ColorImage::from_rgba_unmultiplied(next_size, next_canvas.pixels());
+            let next_tex = ctx.load_texture("onion_next", next_image, egui::TextureOptions::NEAREST);
+            painter.image(next_tex.id(), canvas_rect, uv, Color32::from_rgba_unmultiplied(120, 180, 255, 90));
+        }
+
         // Draw composited canvas image
         if let Some(texture) = &app.canvas_texture {
             let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));

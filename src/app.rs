@@ -118,7 +118,21 @@ impl eframe::App for PixelBuddyApp {
             }
         }
 
+        // Handle animation playback stepping
+        let current_time = ctx.input(|i| i.time);
+        if self.editor.animation.update_playback(current_time) {
+            self.editor.document = self.editor.animation.current_doc().clone();
+            self.texture_dirty = true;
+        }
+        if self.editor.animation.is_playing {
+            ctx.request_repaint();
+        }
+
         // Handle shortcuts
+        if ctx.input(|i| !i.modifiers.ctrl && i.key_pressed(egui::Key::Space)) {
+            self.editor.save_current_frame();
+            self.editor.animation.toggle_play();
+        }
         if ctx.input(|i| i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::Z)) {
             self.editor.history.undo(&mut self.editor.document);
             self.texture_dirty = true;
@@ -176,6 +190,7 @@ impl eframe::App for PixelBuddyApp {
         crate::ui::menu_bar::show(ctx, self);
         crate::ui::toolbar::show(ctx, self);
         crate::ui::layers_panel::show(ctx, self);
+        crate::ui::timeline_panel::show(ctx, self);
         crate::ui::canvas_view::show(ctx, self);
 
         if self.show_new_dialog {

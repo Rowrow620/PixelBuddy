@@ -1,10 +1,12 @@
 pub mod canvas;
 pub mod layer;
 pub mod palette;
+pub mod animation;
 
 pub use canvas::Canvas;
 pub use layer::{BlendMode, Layer};
 pub use palette::Palette;
+pub use animation::{AnimationManager, AnimationFrame};
 
 #[derive(Clone, Debug)]
 pub struct Document {
