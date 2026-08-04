@@ -168,5 +168,35 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             if ui.button("+ Add Color").on_hover_text("Add active primary color to palette").clicked() {
                 app.editor.document.palette.add_color(app.editor.primary_color);
             }
+
+            ui.separator();
+            ui.collapsing("Undo History", |ui| {
+                let undo_descs = app.editor.history.undo_descriptions();
+                let redo_descs = app.editor.history.redo_descriptions();
+                
+                egui::ScrollArea::vertical().id_salt("history_scroll").max_height(140.0).show(ui, |ui| {
+                    if undo_descs.is_empty() && redo_descs.is_empty() {
+                        ui.label(egui::RichText::new("No actions yet").small().color(egui::Color32::GRAY));
+                    } else {
+                        for (idx, desc) in undo_descs.iter().enumerate() {
+                            let is_latest = idx + 1 == undo_descs.len();
+                            let text = format!("{}. {}", idx + 1, desc);
+                            let label = if is_latest {
+                                egui::RichText::new(&text).strong().color(egui::Color32::WHITE)
+                            } else {
+                                egui::RichText::new(&text).color(egui::Color32::LIGHT_GRAY)
+                            };
+                            if ui.selectable_label(is_latest, label).on_hover_text("Click to jump to this point in history").clicked() {
+                                app.editor.history.jump_to_undo_index(idx, &mut app.editor.document);
+                                app.texture_dirty = true;
+                            }
+                        }
+                        for desc in redo_descs.iter().rev() {
+                            let text = format!("↷ {}", desc);
+                            ui.label(egui::RichText::new(&text).italics().color(egui::Color32::DARK_GRAY));
+                        }
+                    }
+                });
+            });
         });
 }

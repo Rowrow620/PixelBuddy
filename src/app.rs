@@ -130,9 +130,32 @@ impl eframe::App for PixelBuddyApp {
         if ctx.input(|i| i.key_pressed(egui::Key::X)) {
             self.editor.swap_colors();
         }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D)) {
+            self.editor.selection.deselect();
+        }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C)) {
+            self.editor.clipboard = crate::editor::clipboard::ClipboardBuffer::copy(&self.editor.document, &self.editor.selection);
+        }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
+            if let Some(buf) = &self.editor.clipboard.clone() {
+                let mut changes = Vec::new();
+                for y in 0..buf.height {
+                    for x in 0..buf.width {
+                        let idx = (y * buf.width + x) as usize;
+                        let color = buf.pixels[idx];
+                        if color[3] > 0 {
+                            changes.push((x, y, color));
+                        }
+                    }
+                }
+                self.apply_tool_changes(changes);
+            }
+        }
         
         let tools = [
             (egui::Key::H, ToolType::Hand),
+            (egui::Key::M, ToolType::Marquee),
+            (egui::Key::V, ToolType::Move),
             (egui::Key::B, ToolType::Pencil),
             (egui::Key::E, ToolType::Eraser),
             (egui::Key::L, ToolType::Line),

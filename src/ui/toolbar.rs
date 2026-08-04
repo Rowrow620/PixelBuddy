@@ -13,6 +13,8 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 let tools: &[(ToolType, &str)] = &[
                     (ToolType::Hand, "Hand / Pan (H)"),
                     (ToolType::Zoom, "Zoom In/Out (Z)"),
+                    (ToolType::Marquee, "Marquee Selection (M)"),
+                    (ToolType::Move, "Move Tool (V)"),
                     (ToolType::Pencil, "Pencil / Brush (B)"),
                     (ToolType::Eraser, "Eraser (E)"),
                     (ToolType::Line, "Line (L)"),
@@ -123,6 +125,25 @@ fn draw_monochrome_icon(painter: &egui::Painter, rect: Rect, tool: ToolType, col
             let lens_center = Pos2::new(center.x - 2.0, center.y - 2.0);
             painter.circle_stroke(lens_center, 5.0, stroke);
             painter.line_segment([Pos2::new(center.x + 1.5, center.y + 1.5), Pos2::new(center.x + 6.5, center.y + 6.5)], stroke);
+        }
+        ToolType::Marquee => {
+            // Dashed Marquee Rectangle
+            let box_rect = Rect::from_center_size(center, Vec2::new(12.0, 12.0));
+            painter.rect_stroke(box_rect, 0, Stroke::new(1.0_f32, color), egui::StrokeKind::Middle);
+            // Inner corner accents
+            painter.circle_filled(Pos2::new(center.x - 4.0, center.y - 4.0), 1.0, color);
+            painter.circle_filled(Pos2::new(center.x + 4.0, center.y + 4.0), 1.0, color);
+        }
+        ToolType::Move => {
+            // Solid Move Arrow Cross
+            let r = 6.0_f32;
+            painter.line_segment([Pos2::new(center.x, center.y - r), Pos2::new(center.x, center.y + r)], stroke);
+            painter.line_segment([Pos2::new(center.x - r, center.y), Pos2::new(center.x + r, center.y)], stroke);
+            // Arrow heads
+            painter.line_segment([Pos2::new(center.x - 2.0, center.y - r + 2.0), Pos2::new(center.x, center.y - r)], stroke);
+            painter.line_segment([Pos2::new(center.x + 2.0, center.y - r + 2.0), Pos2::new(center.x, center.y - r)], stroke);
+            painter.line_segment([Pos2::new(center.x - 2.0, center.y + r - 2.0), Pos2::new(center.x, center.y + r)], stroke);
+            painter.line_segment([Pos2::new(center.x + 2.0, center.y + r - 2.0), Pos2::new(center.x, center.y + r)], stroke);
         }
         ToolType::Pencil => {
             // Slanted Pencil
