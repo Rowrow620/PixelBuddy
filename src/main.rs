@@ -9,10 +9,17 @@ pub mod io;
 fn main() -> eframe::Result {
     env_logger::init();
     
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")).ok();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1280.0, 800.0])
+        .with_title("PixelBuddy");
+
+    if let Some(icon) = icon {
+        viewport = viewport.with_icon(icon);
+    }
+    
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 800.0])
-            .with_title("PixelBuddy"),
+        viewport,
         ..Default::default()
     };
     
