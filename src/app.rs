@@ -153,7 +153,6 @@ impl eframe::App for PixelBuddyApp {
         crate::ui::menu_bar::show(ctx, self);
         crate::ui::toolbar::show(ctx, self);
         crate::ui::layers_panel::show(ctx, self);
-        crate::ui::palette_panel::show(ctx, self);
         crate::ui::canvas_view::show(ctx, self);
 
         if self.show_new_dialog {

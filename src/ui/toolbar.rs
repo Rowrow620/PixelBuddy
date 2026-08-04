@@ -58,30 +58,9 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 }
                 
                 ui.separator();
+                ui.add_space(6.0);
                 
-                // Foreground / background color swatches
-                ui.add_space(8.0);
-                
-                let fg = app.editor.primary_color;
-                let fg_color = Color32::from_rgba_unmultiplied(fg[0], fg[1], fg[2], fg[3]);
-                let (fg_rect, _fg_response) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), egui::Sense::click());
-                ui.painter().rect_filled(fg_rect, 4, fg_color);
-                
-                let bg = app.editor.secondary_color;
-                let bg_color = Color32::from_rgba_unmultiplied(bg[0], bg[1], bg[2], bg[3]);
-                let (bg_rect, _bg_response) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), egui::Sense::click());
-                ui.painter().rect_filled(bg_rect, 4, bg_color);
-                
-                if ui.add(egui::Button::new(egui::RichText::new("Swap").size(11.0)).min_size(Vec2::new(36.0, 20.0)))
-                    .on_hover_text("Swap primary/secondary colors (X)")
-                    .clicked()
-                {
-                    app.editor.swap_colors();
-                }
-                
-                ui.separator();
-                
-                // Color picker for primary color
+                // Single Active Color Picker Button
                 let mut color32 = Color32::from_rgba_unmultiplied(
                     app.editor.primary_color[0],
                     app.editor.primary_color[1],
