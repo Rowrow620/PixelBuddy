@@ -1,12 +1,18 @@
 pub mod history;
+pub mod selection;
+pub mod clipboard;
 
 use crate::document::Document;
 use history::{History, Command};
+pub use selection::Selection;
+pub use clipboard::ClipboardBuffer;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ToolType {
     Hand,
     Zoom,
+    Marquee,
+    Move,
     Pencil,
     Eraser,
     Line,
@@ -22,6 +28,8 @@ pub struct EditorState {
     pub primary_color: [u8; 4],
     pub secondary_color: [u8; 4],
     pub active_tool: ToolType,
+    pub selection: Selection,
+    pub clipboard: Option<ClipboardBuffer>,
 }
 
 impl EditorState {
@@ -32,6 +40,8 @@ impl EditorState {
             primary_color: [0, 0, 0, 255],
             secondary_color: [255, 255, 255, 255],
             active_tool: ToolType::Pencil,
+            selection: Selection::new(),
+            clipboard: None,
         }
     }
 

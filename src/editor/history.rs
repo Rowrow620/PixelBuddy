@@ -52,6 +52,23 @@ impl History {
     pub fn can_redo(&self) -> bool {
         !self.redo_stack.is_empty()
     }
+
+    pub fn undo_descriptions(&self) -> Vec<String> {
+        self.undo_stack.iter().map(|cmd| cmd.description().to_string()).collect()
+    }
+
+    pub fn redo_descriptions(&self) -> Vec<String> {
+        self.redo_stack.iter().map(|cmd| cmd.description().to_string()).collect()
+    }
+
+    pub fn jump_to_undo_index(&mut self, target_idx: usize, doc: &mut Document) {
+        if target_idx < self.undo_stack.len() {
+            let undo_count = self.undo_stack.len() - (target_idx + 1);
+            for _ in 0..undo_count {
+                self.undo(doc);
+            }
+        }
+    }
 }
 
 pub struct DrawCommand {

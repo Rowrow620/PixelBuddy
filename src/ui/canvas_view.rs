@@ -105,6 +105,16 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             }
         }
 
+        // Draw selection marquee overlay box
+        if app.editor.selection.active {
+            let sel = &app.editor.selection;
+            let sel_min = Pos2::new(canvas_origin.x + sel.min_x() as f32 * app.zoom, canvas_origin.y + sel.min_y() as f32 * app.zoom);
+            let sel_max = Pos2::new(canvas_origin.x + (sel.max_x() + 1) as f32 * app.zoom, canvas_origin.y + (sel.max_y() + 1) as f32 * app.zoom);
+            let sel_rect = Rect::from_min_max(sel_min, sel_max);
+            painter.rect_stroke(sel_rect, 0.0, Stroke::new(2.0_f32, Color32::from_rgb(99, 102, 241)), egui::StrokeKind::Outside);
+            painter.rect_stroke(sel_rect, 0.0, Stroke::new(1.0_f32, Color32::WHITE), egui::StrokeKind::Inside);
+        }
+
         // Mouse interaction with canvas
         if let Some(pointer_pos) = response.hover_pos() {
             if canvas_rect.contains(pointer_pos) {
@@ -132,15 +142,24 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         app.stroke_points.clear();
                         app.stroke_points.push((ux, uy));
                         app.shape_start = Some((cx, cy));
+
+                        if app.editor.active_tool == ToolType::Marquee {
+                            tools::marquee::update_selection(&mut app.editor.selection, cx, cy, cx, cy);
+                        }
                     }
                     
-                    // Accumulate stroke points during drag
+                    // Accumulate stroke / selection drag
                     if app.is_drawing && response.dragged_by(egui::PointerButton::Primary) {
                         match app.editor.active_tool {
                             ToolType::Pencil | ToolType::Eraser => {
                                 let last = app.stroke_points.last().copied();
                                 if last != Some((ux, uy)) {
                                     app.stroke_points.push((ux, uy));
+                                }
+                            }
+                            ToolType::Marquee => {
+                                if let Some((sx, sy)) = app.shape_start {
+                                    tools::marquee::update_selection(&mut app.editor.selection, sx, sy, cx, cy);
                                 }
                             }
                             _ => {}
@@ -161,6 +180,9 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                     let rx = (cx - sx).abs() / 2;
                                     let ry = (cy - sy).abs() / 2;
                                     tools::shape::draw_ellipse(ecx, ecy, rx, ry, color, app.shape_filled)
+                                }
+                                ToolType::Move => {
+                                    tools::move_tool::move_pixels(&app.editor.document, &app.editor.selection, cx - sx, cy - sy)
                                 }
                                 _ => vec![],
                             };
