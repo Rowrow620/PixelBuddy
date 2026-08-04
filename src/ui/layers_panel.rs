@@ -31,8 +31,8 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     frame.show(ui, |ui| {
                         ui.horizontal(|ui| {
                             // Visibility toggle
-                            let eye = if layer_visible { "👁" } else { "  " };
-                            if ui.small_button(eye).on_hover_text("Toggle visibility").clicked() {
+                            let vis = if layer_visible { "v" } else { "-" };
+                            if ui.small_button(vis).on_hover_text("Toggle visibility").clicked() {
                                 visibility_changes.push((i, !layer_visible));
                             }
                             
@@ -60,28 +60,28 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             
             // Layer action buttons
             ui.horizontal_wrapped(|ui| {
-                if ui.button("➕").on_hover_text("Add Layer").clicked() {
+                if ui.button("+").on_hover_text("Add Layer").clicked() {
                     app.editor.document.add_layer();
                     app.texture_dirty = true;
                 }
-                if ui.button("🗑").on_hover_text("Delete Layer").clicked() {
+                if ui.button("Del").on_hover_text("Delete Layer").clicked() {
                     if layers_count > 1 {
                         app.editor.document.remove_layer(app.editor.document.active_layer_index);
                         app.texture_dirty = true;
                     }
                 }
-                if ui.button("📋").on_hover_text("Duplicate Layer").clicked() {
+                if ui.button("Dup").on_hover_text("Duplicate Layer").clicked() {
                     app.editor.document.duplicate_layer(app.editor.document.active_layer_index);
                     app.texture_dirty = true;
                 }
-                if ui.button("▲").on_hover_text("Move Up").clicked() {
+                if ui.button("Up").on_hover_text("Move Up").clicked() {
                     let idx = app.editor.document.active_layer_index;
                     if idx + 1 < layers_count {
                         app.editor.document.move_layer(idx, idx + 1);
                         app.texture_dirty = true;
                     }
                 }
-                if ui.button("▼").on_hover_text("Move Down").clicked() {
+                if ui.button("Dn").on_hover_text("Move Down").clicked() {
                     let idx = app.editor.document.active_layer_index;
                     if idx > 0 {
                         app.editor.document.move_layer(idx, idx - 1);

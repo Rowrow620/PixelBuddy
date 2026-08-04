@@ -9,18 +9,40 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
         
         let painter = ui.painter_at(rect);
         
-        // Handle scroll for zoom
+        // Auto-fit canvas to viewport on open/new/request
+        if app.auto_fit_requested && rect.width() > 0.0 && rect.height() > 0.0 {
+            let canvas_w = app.editor.document.width as f32;
+            let canvas_h = app.editor.document.height as f32;
+            let fit_x = (rect.width() * 0.75) / canvas_w;
+            let fit_y = (rect.height() * 0.75) / canvas_h;
+            app.zoom = fit_x.min(fit_y).clamp(1.0, 64.0);
+            app.pan_offset = Vec2::ZERO;
+            app.auto_fit_requested = false;
+        }
+        
+        // Handle scroll for zoom (smoother multiplier)
         if response.hovered() {
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll_delta != 0.0 {
-                let zoom_factor = if scroll_delta > 0.0 { 1.25 } else { 0.8 };
+                let zoom_factor = if scroll_delta > 0.0 { 1.08 } else { 0.925 };
                 app.zoom = (app.zoom * zoom_factor).clamp(0.5, 64.0);
             }
         }
         
-        // Handle middle drag for panning
-        if response.dragged_by(egui::PointerButton::Middle) {
+        // Handle middle drag for panning OR Hand tool primary drag
+        if response.dragged_by(egui::PointerButton::Middle)
+            || (app.editor.active_tool == ToolType::Hand && response.dragged_by(egui::PointerButton::Primary))
+        {
             app.pan_offset += response.drag_delta();
+        }
+
+        // Handle Zoom tool click zooming
+        if app.editor.active_tool == ToolType::Zoom && response.hovered() {
+            if response.clicked_by(egui::PointerButton::Primary) {
+                app.zoom = (app.zoom * 1.5).clamp(0.5, 64.0);
+            } else if response.clicked_by(egui::PointerButton::Secondary) {
+                app.zoom = (app.zoom / 1.5).clamp(0.5, 64.0);
+            }
         }
 
         let canvas_w = app.editor.document.width as f32;
@@ -183,17 +205,30 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             }
         }
         
-        // Status bar text in corner
-        let status_text = format!(
-            "{}×{} | Zoom: {:.0}x",
-            app.editor.document.width, app.editor.document.height, app.zoom
-        );
-        painter.text(
-            Pos2::new(rect.max.x - 10.0, rect.max.y - 10.0),
-            egui::Align2::RIGHT_BOTTOM,
-            status_text,
-            egui::FontId::proportional(13.0),
-            Color32::from_white_alpha(180),
-        );
+        // Interactive status bar in corner with clickable zoom controls
+        egui::Area::new(egui::Id::new("canvas_zoom_overlay"))
+            .fixed_pos(Pos2::new(rect.max.x - 220.0, rect.max.y - 32.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{}×{}", app.editor.document.width, app.editor.document.height))
+                            .color(Color32::from_white_alpha(180))
+                            .size(12.0)
+                    );
+                    ui.label(egui::RichText::new("|").color(Color32::from_white_alpha(100)));
+                    ui.label(egui::RichText::new("Zoom:").color(Color32::from_white_alpha(180)).size(12.0));
+                    if ui.small_button("➖").on_hover_text("Zoom Out (-)").clicked() {
+                        app.zoom = (app.zoom * 0.85).clamp(0.5, 64.0);
+                    }
+                    ui.label(
+                        egui::RichText::new(format!("{:.0}x", app.zoom))
+                            .color(Color32::WHITE)
+                            .size(12.0)
+                    );
+                    if ui.small_button("➕").on_hover_text("Zoom In (+)").clicked() {
+                        app.zoom = (app.zoom * 1.18).clamp(0.5, 64.0);
+                    }
+                });
+            });
     });
 }

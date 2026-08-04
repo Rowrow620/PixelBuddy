@@ -5,6 +5,8 @@ use history::{History, Command};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ToolType {
+    Hand,
+    Zoom,
     Pencil,
     Eraser,
     Line,
