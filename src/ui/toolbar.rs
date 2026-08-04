@@ -58,24 +58,6 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     }
                     ui.add_space(2.0);
                 }
-                
-                ui.separator();
-                
-                // Tool-specific options
-                match app.editor.active_tool {
-                    ToolType::Fill => {
-                        ui.label("Tolerance");
-                        let mut tol = app.fill_tolerance as i32;
-                        if ui.add(egui::Slider::new(&mut tol, 0..=255)).changed() {
-                            app.fill_tolerance = tol as u8;
-                        }
-                        ui.checkbox(&mut app.fill_contiguous, "Contiguous");
-                    }
-                    ToolType::Rectangle | ToolType::Ellipse => {
-                        ui.checkbox(&mut app.shape_filled, "Filled");
-                    }
-                    _ => {}
-                }
             });
         });
 }
