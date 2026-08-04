@@ -56,26 +56,21 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
         );
         let canvas_rect = Rect::from_min_size(canvas_origin, Vec2::new(display_w, display_h));
         
-        // Draw checkerboard background for transparency
-        let check_size = (8.0 * app.zoom).max(8.0).min(20.0);
-        let cols = (display_w / check_size).ceil() as i32;
-        let rows = (display_h / check_size).ceil() as i32;
-        for row in 0..rows {
-            for col in 0..cols {
+        // Draw checkerboard background matching exact pixel grid
+        let check_size = app.zoom;
+        for row in 0..app.editor.document.height {
+            for col in 0..app.editor.document.width {
                 let color = if (col + row) % 2 == 0 {
-                    Color32::from_gray(200)
+                    Color32::from_gray(210)
                 } else {
-                    Color32::from_gray(160)
+                    Color32::from_gray(170)
                 };
                 let check_min = Pos2::new(
                     canvas_origin.x + col as f32 * check_size,
                     canvas_origin.y + row as f32 * check_size,
                 );
                 let check_rect = Rect::from_min_size(check_min, Vec2::splat(check_size));
-                let clipped = check_rect.intersect(canvas_rect);
-                if clipped.width() > 0.0 && clipped.height() > 0.0 {
-                    painter.rect_filled(clipped, 0, color);
-                }
+                painter.rect_filled(check_rect, 0, color);
             }
         }
         
