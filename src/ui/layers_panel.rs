@@ -13,7 +13,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             let mut new_active = active_idx;
             let mut visibility_changes: Vec<(usize, bool)> = Vec::new();
 
-            egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("layers_scroll").max_height(250.0).show(ui, |ui| {
                 // Iterate in reverse for Photoshop-like display (top layer listed first)
                 for i in (0..layers_count).rev() {
                     let is_active = i == active_idx;
@@ -135,7 +135,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             let selected = app.editor.document.palette.selected_index;
             let palette_len = app.editor.document.palette.colors.len();
 
-            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("palette_scroll").max_height(220.0).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     for i in 0..palette_len {
                         let color = app.editor.document.palette.colors[i];
