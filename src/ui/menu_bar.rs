@@ -126,5 +126,29 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 }
             });
         });
+
+        // Top Contextual Tool Options Bar
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.add_space(4.0);
+            match app.editor.active_tool {
+                crate::editor::ToolType::Fill => {
+                    ui.label(egui::RichText::new("Flood Fill").strong().size(11.0));
+                    ui.separator();
+                    ui.label(egui::RichText::new("Tolerance:").size(11.0));
+                    let mut tol = app.fill_tolerance as i32;
+                    if ui.add(egui::Slider::new(&mut tol, 0..=255)).changed() {
+                        app.fill_tolerance = tol as u8;
+                    }
+                    ui.checkbox(&mut app.fill_contiguous, "Contiguous Fill");
+                }
+                crate::editor::ToolType::Rectangle | crate::editor::ToolType::Ellipse => {
+                    ui.label(egui::RichText::new("Shape Tool").strong().size(11.0));
+                    ui.separator();
+                    ui.checkbox(&mut app.shape_filled, "Fill Interior");
+                }
+                _ => {}
+            }
+        });
     });
 }
