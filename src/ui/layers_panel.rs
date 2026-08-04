@@ -129,7 +129,23 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             }
 
             ui.add_space(12.0);
-            ui.heading("Palette");
+            ui.horizontal(|ui| {
+                ui.heading("Palette");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut color32 = egui::Color32::from_rgba_unmultiplied(
+                        app.editor.primary_color[0],
+                        app.editor.primary_color[1],
+                        app.editor.primary_color[2],
+                        app.editor.primary_color[3],
+                    );
+                    if egui::color_picker::color_edit_button_srgba(
+                        ui, &mut color32, egui::color_picker::Alpha::Opaque
+                    ).changed() {
+                        let arr = color32.to_array();
+                        app.editor.set_primary_color(arr);
+                    }
+                });
+            });
             ui.separator();
 
             let selected = app.editor.document.palette.selected_index;
