@@ -1,3 +1,4 @@
+use egui::{Color32, Pos2, Rect, Stroke, Vec2};
 use crate::app::PixelBuddyApp;
 use crate::editor::ToolType;
 
@@ -9,31 +10,48 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             ui.vertical_centered(|ui| {
                 ui.add_space(8.0);
                 
-                let tools: &[(ToolType, &str, &str)] = &[
-                    (ToolType::Pencil, "✏", "Pencil (B)"),
-                    (ToolType::Eraser, "⌫", "Eraser (E)"),
-                    (ToolType::Line, "╱", "Line (L)"),
-                    (ToolType::Rectangle, "▢", "Rectangle (R)"),
-                    (ToolType::Ellipse, "◯", "Ellipse (O)"),
-                    (ToolType::Fill, "◉", "Fill (G)"),
-                    (ToolType::Eyedropper, "⊙", "Eyedropper (I)"),
+                let tools: &[(ToolType, &str)] = &[
+                    (ToolType::Hand, "Hand / Pan (H)"),
+                    (ToolType::Zoom, "Zoom In/Out (Z)"),
+                    (ToolType::Pencil, "Pencil / Brush (B)"),
+                    (ToolType::Eraser, "Eraser (E)"),
+                    (ToolType::Line, "Line (L)"),
+                    (ToolType::Rectangle, "Rectangle (R)"),
+                    (ToolType::Ellipse, "Ellipse / Circle (O)"),
+                    (ToolType::Fill, "Flood Fill (G)"),
+                    (ToolType::Eyedropper, "Eyedropper (I)"),
                 ];
                 
-                for &(tool, icon, tooltip) in tools {
+                for &(tool, tooltip) in tools {
                     let is_active = app.editor.active_tool == tool;
-                    let button = if is_active {
-                        egui::Button::new(
-                            egui::RichText::new(icon).size(18.0)
-                        )
-                        .min_size(egui::vec2(36.0, 36.0))
-                        .fill(ui.visuals().selection.bg_fill)
+                    let stroke = if is_active {
+                        Stroke::new(2.0_f32, ui.visuals().selection.bg_fill)
                     } else {
-                        egui::Button::new(
-                            egui::RichText::new(icon).size(18.0)
-                        )
-                        .min_size(egui::vec2(36.0, 36.0))
+                        Stroke::NONE
                     };
-                    if ui.add(button).on_hover_text(tooltip).clicked() {
+                    
+                    let (rect, response) = ui.allocate_exact_size(Vec2::new(36.0, 32.0), egui::Sense::click());
+                    
+                    let bg_color = if response.hovered() {
+                        Color32::from_rgb(50, 50, 72)
+                    } else {
+                        Color32::from_rgb(38, 38, 56)
+                    };
+                    
+                    ui.painter().rect_filled(rect, 4, bg_color);
+                    if is_active {
+                        ui.painter().rect_stroke(rect, 4, stroke, egui::StrokeKind::Inside);
+                    }
+                    
+                    let icon_color = if is_active {
+                        Color32::WHITE
+                    } else {
+                        Color32::from_gray(210)
+                    };
+                    
+                    draw_monochrome_icon(ui.painter(), rect, tool, icon_color);
+
+                    if response.on_hover_text(tooltip).clicked() {
                         app.editor.set_active_tool(tool);
                     }
                     ui.add_space(2.0);
@@ -45,23 +63,26 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 ui.add_space(8.0);
                 
                 let fg = app.editor.primary_color;
-                let fg_color = egui::Color32::from_rgba_unmultiplied(fg[0], fg[1], fg[2], fg[3]);
-                let (fg_rect, _fg_response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
+                let fg_color = Color32::from_rgba_unmultiplied(fg[0], fg[1], fg[2], fg[3]);
+                let (fg_rect, _fg_response) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), egui::Sense::click());
                 ui.painter().rect_filled(fg_rect, 4, fg_color);
                 
                 let bg = app.editor.secondary_color;
-                let bg_color = egui::Color32::from_rgba_unmultiplied(bg[0], bg[1], bg[2], bg[3]);
-                let (bg_rect, _bg_response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
+                let bg_color = Color32::from_rgba_unmultiplied(bg[0], bg[1], bg[2], bg[3]);
+                let (bg_rect, _bg_response) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), egui::Sense::click());
                 ui.painter().rect_filled(bg_rect, 4, bg_color);
                 
-                if ui.small_button("⇄ Swap").on_hover_text("Swap colors (X)").clicked() {
+                if ui.add(egui::Button::new(egui::RichText::new("Swap").size(11.0)).min_size(Vec2::new(36.0, 20.0)))
+                    .on_hover_text("Swap primary/secondary colors (X)")
+                    .clicked()
+                {
                     app.editor.swap_colors();
                 }
                 
                 ui.separator();
                 
                 // Color picker for primary color
-                let mut color32 = egui::Color32::from_rgba_unmultiplied(
+                let mut color32 = Color32::from_rgba_unmultiplied(
                     app.editor.primary_color[0],
                     app.editor.primary_color[1],
                     app.editor.primary_color[2],
@@ -93,4 +114,72 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 }
             });
         });
+}
+
+fn draw_monochrome_icon(painter: &egui::Painter, rect: Rect, tool: ToolType, color: Color32) {
+    let center = rect.center();
+    let stroke = Stroke::new(1.5_f32, color);
+
+    match tool {
+        ToolType::Hand => {
+            // 4-way directional arrow compass (matching Move icon style)
+            let r = 7.0_f32;
+            painter.line_segment([Pos2::new(center.x, center.y - r), Pos2::new(center.x, center.y + r)], stroke);
+            painter.line_segment([Pos2::new(center.x - r, center.y), Pos2::new(center.x + r, center.y)], stroke);
+            // Up arrow tip
+            painter.line_segment([Pos2::new(center.x - 2.5, center.y - r + 2.5), Pos2::new(center.x, center.y - r)], stroke);
+            painter.line_segment([Pos2::new(center.x + 2.5, center.y - r + 2.5), Pos2::new(center.x, center.y - r)], stroke);
+            // Down arrow tip
+            painter.line_segment([Pos2::new(center.x - 2.5, center.y + r - 2.5), Pos2::new(center.x, center.y + r)], stroke);
+            painter.line_segment([Pos2::new(center.x + 2.5, center.y + r - 2.5), Pos2::new(center.x, center.y + r)], stroke);
+            // Left arrow tip
+            painter.line_segment([Pos2::new(center.x - r + 2.5, center.y - 2.5), Pos2::new(center.x - r, center.y)], stroke);
+            painter.line_segment([Pos2::new(center.x - r + 2.5, center.y + 2.5), Pos2::new(center.x - r, center.y)], stroke);
+            // Right arrow tip
+            painter.line_segment([Pos2::new(center.x + r - 2.5, center.y - 2.5), Pos2::new(center.x + r, center.y)], stroke);
+            painter.line_segment([Pos2::new(center.x + r - 2.5, center.y + 2.5), Pos2::new(center.x + r, center.y)], stroke);
+        }
+        ToolType::Zoom => {
+            // Magnifying Glass
+            let lens_center = Pos2::new(center.x - 2.0, center.y - 2.0);
+            painter.circle_stroke(lens_center, 5.0, stroke);
+            painter.line_segment([Pos2::new(center.x + 1.5, center.y + 1.5), Pos2::new(center.x + 6.5, center.y + 6.5)], stroke);
+        }
+        ToolType::Pencil => {
+            // Slanted Pencil
+            painter.line_segment([Pos2::new(center.x - 5.0, center.y + 5.0), Pos2::new(center.x + 4.0, center.y - 4.0)], stroke);
+            painter.line_segment([Pos2::new(center.x - 5.0, center.y + 5.0), Pos2::new(center.x - 7.0, center.y + 7.0)], stroke);
+            painter.line_segment([Pos2::new(center.x + 2.0, center.y - 6.0), Pos2::new(center.x + 6.0, center.y - 2.0)], stroke);
+        }
+        ToolType::Eraser => {
+            // Block Eraser
+            let eraser_rect = Rect::from_center_size(center, Vec2::new(12.0, 10.0));
+            painter.rect_stroke(eraser_rect, 2, stroke, egui::StrokeKind::Middle);
+            painter.line_segment([Pos2::new(center.x - 1.0, center.y - 5.0), Pos2::new(center.x - 1.0, center.y + 5.0)], stroke);
+        }
+        ToolType::Line => {
+            // Diagonal Line
+            painter.line_segment([Pos2::new(center.x - 6.0, center.y + 6.0), Pos2::new(center.x + 6.0, center.y - 6.0)], stroke);
+        }
+        ToolType::Rectangle => {
+            // Box
+            let box_rect = Rect::from_center_size(center, Vec2::new(12.0, 12.0));
+            painter.rect_stroke(box_rect, 0, stroke, egui::StrokeKind::Middle);
+        }
+        ToolType::Ellipse => {
+            // Circle
+            painter.circle_stroke(center, 6.0, stroke);
+        }
+        ToolType::Fill => {
+            // Paint Bucket / Fill target
+            let bucket_rect = Rect::from_center_size(Pos2::new(center.x - 1.0, center.y - 1.0), Vec2::new(10.0, 10.0));
+            painter.rect_stroke(bucket_rect, 1, stroke, egui::StrokeKind::Middle);
+            painter.circle_filled(Pos2::new(center.x + 5.0, center.y + 5.0), 2.5, color);
+        }
+        ToolType::Eyedropper => {
+            // Pipette sampler
+            painter.circle_stroke(center, 4.0, stroke);
+            painter.line_segment([Pos2::new(center.x + 3.0, center.y + 3.0), Pos2::new(center.x + 7.0, center.y + 7.0)], stroke);
+        }
+    }
 }

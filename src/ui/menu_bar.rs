@@ -61,9 +61,49 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     ui.close_menu();
                 }
                 if ui.button("Fit to Window").clicked() {
-                    // Handled generally by panning to center
+                    app.auto_fit_requested = true;
+                    ui.close_menu();
+                }
+            });
+
+            ui.menu_button("Settings", |ui| {
+                ui.label(egui::RichText::new("New Canvas Presets").strong());
+                ui.horizontal(|ui| {
+                    for (label, dim) in [("16×16", 16), ("32×32", 32), ("64×64", 64), ("128×128", 128)] {
+                        if ui.button(label).clicked() {
+                            app.editor = crate::editor::EditorState::new(dim, dim);
+                            app.pan_offset = egui::Vec2::ZERO;
+                            app.auto_fit_requested = true;
+                            app.texture_dirty = true;
+                            ui.close_menu();
+                        }
+                    }
+                });
+
+                ui.separator();
+                ui.label(egui::RichText::new("Canvas & Viewport").strong());
+                ui.checkbox(&mut app.show_grid, "Show Pixel Grid");
+                if ui.button("Fit Canvas to Viewport").clicked() {
+                    app.auto_fit_requested = true;
+                    ui.close_menu();
+                }
+
+                ui.separator();
+                ui.label(egui::RichText::new("Tool Defaults").strong());
+                ui.horizontal(|ui| {
+                    ui.label("Fill Tolerance:");
+                    let mut tol = app.fill_tolerance as i32;
+                    if ui.add(egui::Slider::new(&mut tol, 0..=255)).changed() {
+                        app.fill_tolerance = tol as u8;
+                    }
+                });
+                ui.checkbox(&mut app.fill_contiguous, "Contiguous Fill");
+                ui.checkbox(&mut app.shape_filled, "Fill Shapes (Rect/Ellipse)");
+
+                ui.separator();
+                if ui.button("Reset Viewport Pan").clicked() {
                     app.pan_offset = egui::Vec2::ZERO;
-                    app.zoom = 1.0;
+                    app.auto_fit_requested = true;
                     ui.close_menu();
                 }
             });

@@ -22,6 +22,7 @@ pub struct PixelBuddyApp {
     pub fill_contiguous: bool,
     pub shape_filled: bool,
     pub io_handler: IoHandler,
+    pub auto_fit_requested: bool,
 }
 
 impl PixelBuddyApp {
@@ -44,6 +45,7 @@ impl PixelBuddyApp {
             fill_contiguous: true,
             shape_filled: false,
             io_handler: IoHandler::new(),
+            auto_fit_requested: true,
         }
     }
 
@@ -92,6 +94,12 @@ impl PixelBuddyApp {
 
 impl eframe::App for PixelBuddyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Ensure texture is updated before rendering panels
+        self.update_texture(ctx);
+        if self.texture_dirty {
+            ctx.request_repaint();
+        }
+
         // Handle I/O events
         while let Ok(action) = self.io_handler.receiver.try_recv() {
             match action {
@@ -100,7 +108,7 @@ impl eframe::App for PixelBuddyApp {
                         self.editor.document = doc;
                         self.editor.history = crate::editor::history::History::new(100);
                         self.pan_offset = egui::Vec2::ZERO;
-                        self.zoom = 8.0;
+                        self.auto_fit_requested = true;
                         self.texture_dirty = true;
                     }
                 }
@@ -124,6 +132,7 @@ impl eframe::App for PixelBuddyApp {
         }
         
         let tools = [
+            (egui::Key::H, ToolType::Hand),
             (egui::Key::B, ToolType::Pencil),
             (egui::Key::E, ToolType::Eraser),
             (egui::Key::L, ToolType::Line),
@@ -133,9 +142,12 @@ impl eframe::App for PixelBuddyApp {
             (egui::Key::I, ToolType::Eyedropper),
         ];
         for (key, tool) in tools {
-            if ctx.input(|i| i.key_pressed(key)) {
+            if ctx.input(|i| !i.modifiers.ctrl && i.key_pressed(key)) {
                 self.editor.set_active_tool(tool);
             }
+        }
+        if ctx.input(|i| !i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::Z)) {
+            self.editor.set_active_tool(ToolType::Zoom);
         }
 
         crate::ui::menu_bar::show(ctx, self);
@@ -146,7 +158,17 @@ impl eframe::App for PixelBuddyApp {
 
         if self.show_new_dialog {
             let mut open = true;
-            egui::Window::new("New Document").open(&mut open).show(ctx, |ui| {
+            egui::Window::new("New Document").open(&mut open).resizable(false).show(ctx, |ui| {
+                ui.label(egui::RichText::new("Presets").strong());
+                ui.horizontal(|ui| {
+                    for (label, w, h) in [("16×16", "16", "16"), ("32×32", "32", "32"), ("64×64", "64", "64"), ("128×128", "128", "128")] {
+                        if ui.button(label).clicked() {
+                            self.new_width = w.to_string();
+                            self.new_height = h.to_string();
+                        }
+                    }
+                });
+                ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("Width:");
                     ui.text_edit_singleline(&mut self.new_width);
@@ -155,10 +177,13 @@ impl eframe::App for PixelBuddyApp {
                     ui.label("Height:");
                     ui.text_edit_singleline(&mut self.new_height);
                 });
+                ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Create").clicked() {
                         if let (Ok(w), Ok(h)) = (self.new_width.parse::<u32>(), self.new_height.parse::<u32>()) {
                             self.editor = EditorState::new(w, h);
+                            self.pan_offset = egui::Vec2::ZERO;
+                            self.auto_fit_requested = true;
                             self.texture_dirty = true;
                             self.show_new_dialog = false;
                         }
