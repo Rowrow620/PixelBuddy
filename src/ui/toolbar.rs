@@ -60,23 +60,6 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 }
                 
                 ui.separator();
-                ui.add_space(6.0);
-                
-                // Single Active Color Picker Button
-                let mut color32 = Color32::from_rgba_unmultiplied(
-                    app.editor.primary_color[0],
-                    app.editor.primary_color[1],
-                    app.editor.primary_color[2],
-                    app.editor.primary_color[3],
-                );
-                if egui::color_picker::color_edit_button_srgba(
-                    ui, &mut color32, egui::color_picker::Alpha::Opaque
-                ).changed() {
-                    let arr = color32.to_array();
-                    app.editor.set_primary_color(arr);
-                }
-                
-                ui.separator();
                 
                 // Tool-specific options
                 match app.editor.active_tool {
