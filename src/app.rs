@@ -23,6 +23,7 @@ pub struct PixelBuddyApp {
     pub shape_filled: bool,
     pub io_handler: IoHandler,
     pub auto_fit_requested: bool,
+    pub show_timeline: bool,
 }
 
 impl PixelBuddyApp {
@@ -46,6 +47,7 @@ impl PixelBuddyApp {
             shape_filled: false,
             io_handler: IoHandler::new(),
             auto_fit_requested: true,
+            show_timeline: false,
         }
     }
 
@@ -190,7 +192,9 @@ impl eframe::App for PixelBuddyApp {
         crate::ui::menu_bar::show(ctx, self);
         crate::ui::toolbar::show(ctx, self);
         crate::ui::layers_panel::show(ctx, self);
-        crate::ui::timeline_panel::show(ctx, self);
+        if self.show_timeline {
+            crate::ui::timeline_panel::show(ctx, self);
+        }
         crate::ui::canvas_view::show(ctx, self);
 
         if self.show_new_dialog {

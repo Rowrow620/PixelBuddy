@@ -64,6 +64,9 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 if ui.checkbox(&mut app.show_grid, "Toggle Grid").clicked() {
                     ui.close_menu();
                 }
+                if ui.checkbox(&mut app.show_timeline, "Animation Timeline").clicked() {
+                    ui.close_menu();
+                }
                 if ui.button("Zoom In").clicked() {
                     app.zoom *= 2.0;
                     if app.zoom > 64.0 { app.zoom = 64.0; }
@@ -97,6 +100,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 ui.separator();
                 ui.label(egui::RichText::new("Canvas & Viewport").strong());
                 ui.checkbox(&mut app.show_grid, "Show Pixel Grid");
+                ui.checkbox(&mut app.show_timeline, "Show Animation Timeline");
                 if ui.button("Fit Canvas to Viewport").clicked() {
                     app.auto_fit_requested = true;
                     ui.close_menu();
