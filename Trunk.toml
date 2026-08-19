@@ -1,12 +1,13 @@
+# CI installs Trunk 0.21.7; allow compatible patch releases for local development.
+trunk_version = ">=0.21.5, <0.22"
+dist = "dist"
+
 [build]
 target = "index.html"
-dist = "dist"
 public_url = "./"
+locked = true
 
 [serve]
-address = "127.0.0.1"
+addresses = ["127.0.0.1"]
 port = 8080
 open = true
-
-[clean]
-dist = "dist"
