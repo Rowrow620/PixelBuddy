@@ -1,7 +1,6 @@
 use crate::app::PixelBuddyApp;
 use crate::io;
 
-
 pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     let frame = egui::Frame::default()
         .fill(egui::Color32::from_rgb(15, 15, 25))
@@ -10,165 +9,224 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     egui::TopBottomPanel::top("menu_bar")
         .frame(frame)
         .show(ctx, |ui| {
-        egui::menu::bar(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("New").clicked() {
-                    app.show_new_dialog = true;
-                    ui.close_menu();
-                }
-                if ui.button("Open").clicked() {
-                    io::trigger_open_file(app.io_handler.sender.clone());
-                    ui.close_menu();
-                }
-                if ui.button("Save as PNG").clicked() {
-                    // Export is effectively Save as PNG for now
-                    if let Ok(png_data) = io::png::export_document_to_png(app.editor.document()) {
-                        io::trigger_export(io::ExportRequest::png(png_data), app.io_handler.sender.clone());
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("New").clicked() {
+                        app.show_new_dialog = true;
+                        ui.close_menu();
                     }
-                    ui.close_menu();
-                }
-                if ui.button("Export PNG").clicked() {
-                    if let Ok(png_data) = io::png::export_document_to_png(app.editor.document()) {
-                        io::trigger_export(io::ExportRequest::png(png_data), app.io_handler.sender.clone());
+                    if ui.button("Open").clicked() {
+                        io::trigger_open_file(app.io_handler.sender.clone());
+                        ui.close_menu();
                     }
-                    ui.close_menu();
-                }
-                if ui.button("Export Animated GIF").clicked() {
-                    app.editor.copy_current_frame();
-                    if let Ok(gif_data) = io::gif::export_animation_to_gif(&app.editor.animation) {
-                        io::trigger_export(io::ExportRequest::gif(gif_data), app.io_handler.sender.clone());
+                    if ui.button("Save as PNG").clicked() {
+                        // Export is effectively Save as PNG for now
+                        if let Ok(png_data) = io::png::export_document_to_png(app.editor.document())
+                        {
+                            io::trigger_export(
+                                io::ExportRequest::png(png_data),
+                                app.io_handler.sender.clone(),
+                            );
+                        }
+                        ui.close_menu();
                     }
-                    ui.close_menu();
-                }
-                if ui.button("Export Sprite Sheet (PNG)").clicked() {
-                    app.editor.copy_current_frame();
-                    if let Ok(sheet_data) = io::spritesheet::export_spritesheet_png(&app.editor.animation) {
-                        io::trigger_export(io::ExportRequest::png(sheet_data), app.io_handler.sender.clone());
+                    if ui.button("Export PNG").clicked() {
+                        if let Ok(png_data) = io::png::export_document_to_png(app.editor.document())
+                        {
+                            io::trigger_export(
+                                io::ExportRequest::png(png_data),
+                                app.io_handler.sender.clone(),
+                            );
+                        }
+                        ui.close_menu();
                     }
-                    ui.close_menu();
-                }
-            });
-            
-            ui.menu_button("Edit", |ui| {
-                if ui.button("Undo (Ctrl+Z)").clicked() {
-                    if app.editor.undo() {
-                        app.texture_dirty = true;
+                    if ui.button("Export Animated GIF").clicked() {
+                        app.editor.copy_current_frame();
+                        if let Ok(gif_data) =
+                            io::gif::export_animation_to_gif(&app.editor.animation)
+                        {
+                            io::trigger_export(
+                                io::ExportRequest::gif(gif_data),
+                                app.io_handler.sender.clone(),
+                            );
+                        }
+                        ui.close_menu();
                     }
-                    ui.close_menu();
-                }
-                if ui.button("Redo (Ctrl+Y)").clicked() {
-                    if app.editor.redo() {
-                        app.texture_dirty = true;
+                    if ui.button("Export Sprite Sheet (PNG)").clicked() {
+                        app.editor.copy_current_frame();
+                        if let Ok(sheet_data) =
+                            io::spritesheet::export_spritesheet_png(&app.editor.animation)
+                        {
+                            io::trigger_export(
+                                io::ExportRequest::png(sheet_data),
+                                app.io_handler.sender.clone(),
+                            );
+                        }
+                        ui.close_menu();
                     }
-                    ui.close_menu();
-                }
-                if ui.button("Swap Colors (X)").clicked() {
-                    app.editor.swap_colors();
-                    ui.close_menu();
-                }
-            });
-            
-            ui.menu_button("View", |ui| {
-                if ui.checkbox(&mut app.show_grid, "Toggle Grid").clicked() {
-                    ui.close_menu();
-                }
-                if ui.checkbox(&mut app.show_timeline, "Animation Timeline").clicked() {
-                    ui.close_menu();
-                }
-                if ui.button("Zoom In").clicked() {
-                    app.zoom *= 2.0;
-                    if app.zoom > 64.0 { app.zoom = 64.0; }
-                    ui.close_menu();
-                }
-                if ui.button("Zoom Out").clicked() {
-                    app.zoom *= 0.5;
-                    if app.zoom < 0.5 { app.zoom = 0.5; }
-                    ui.close_menu();
-                }
-                if ui.button("Fit to Window").clicked() {
-                    app.auto_fit_requested = true;
-                    ui.close_menu();
-                }
-            });
+                });
 
-            ui.menu_button("Settings", |ui| {
-                ui.label(egui::RichText::new("New Canvas Presets").strong());
-                ui.horizontal(|ui| {
-                    for (label, dim) in [("16×16", 16), ("32×32", 32), ("64×64", 64), ("128×128", 128)] {
-                        if ui.button(label).clicked() {
-                            app.editor = crate::editor::EditorState::new(dim, dim);
-                            app.pan_offset = egui::Vec2::ZERO;
-                            app.auto_fit_requested = true;
+                ui.menu_button("Edit", |ui| {
+                    if ui.button("Undo (Ctrl+Z)").clicked() {
+                        if app.editor.undo() {
                             app.texture_dirty = true;
-                            ui.close_menu();
                         }
+                        ui.close_menu();
                     }
-                });
-
-                ui.separator();
-                ui.label(egui::RichText::new("Resize Existing Canvas").strong());
-                ui.horizontal(|ui| {
-                    for (label, dim) in [("16×16", 16), ("32×32", 32), ("64×64", 64), ("128×128", 128)] {
-                        if ui.button(label).clicked() {
-                            app.pending_resize = Some((dim, dim));
-                            ui.close_menu();
+                    if ui.button("Redo (Ctrl+Y)").clicked() {
+                        if app.editor.redo() {
+                            app.texture_dirty = true;
                         }
+                        ui.close_menu();
+                    }
+                    if ui.button("Swap Colors (X)").clicked() {
+                        app.editor.swap_colors();
+                        ui.close_menu();
                     }
                 });
 
-                ui.separator();
-                ui.label(egui::RichText::new("Canvas & Viewport").strong());
-                ui.checkbox(&mut app.show_grid, "Show Pixel Grid");
-                ui.checkbox(&mut app.show_timeline, "Show Animation Timeline");
-                if ui.button("Fit Canvas to Viewport").clicked() {
-                    app.auto_fit_requested = true;
-                    ui.close_menu();
-                }
-
-                ui.separator();
-                ui.label(egui::RichText::new("Tool Defaults").strong());
-                ui.horizontal(|ui| {
-                    ui.label("Fill Tolerance:");
-                    let mut tol = app.fill_tolerance as i32;
-                    if ui.add(egui::Slider::new(&mut tol, 0..=255)).changed() {
-                        app.fill_tolerance = tol as u8;
+                ui.menu_button("View", |ui| {
+                    if ui.checkbox(&mut app.show_grid, "Toggle Grid").clicked() {
+                        ui.close_menu();
+                    }
+                    if ui
+                        .checkbox(&mut app.show_timeline, "Animation Timeline")
+                        .clicked()
+                    {
+                        ui.close_menu();
+                    }
+                    if ui.button("Zoom In").clicked() {
+                        app.zoom *= 2.0;
+                        if app.zoom > 64.0 {
+                            app.zoom = 64.0;
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button("Zoom Out").clicked() {
+                        app.zoom *= 0.5;
+                        if app.zoom < 0.5 {
+                            app.zoom = 0.5;
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button("Fit to Window").clicked() {
+                        app.auto_fit_requested = true;
+                        ui.close_menu();
                     }
                 });
-                ui.checkbox(&mut app.fill_contiguous, "Contiguous Fill");
-                ui.checkbox(&mut app.shape_filled, "Fill Shapes (Rect/Ellipse)");
 
-                ui.separator();
-                if ui.button("Reset Viewport Pan").clicked() {
-                    app.pan_offset = egui::Vec2::ZERO;
-                    app.auto_fit_requested = true;
-                    ui.close_menu();
-                }
-            });
+                ui.menu_button("Settings", |ui| {
+                    ui.label(egui::RichText::new("New Canvas Presets").strong());
+                    ui.horizontal(|ui| {
+                        for (label, dim) in [
+                            ("16×16", 16),
+                            ("32×32", 32),
+                            ("64×64", 64),
+                            ("128×128", 128),
+                        ] {
+                            if ui.button(label).clicked() {
+                                app.editor = crate::editor::EditorState::new(dim, dim);
+                                app.pan_offset = egui::Vec2::ZERO;
+                                app.auto_fit_requested = true;
+                                app.texture_dirty = true;
+                                ui.close_menu();
+                            }
+                        }
+                    });
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let text_color = ui.visuals().text_color();
-                if ui.add(egui::Button::image(egui::Image::new(egui::include_image!("../../assets/icons/win-close.svg")).tint(text_color))).clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                if ui.add(egui::Button::image(egui::Image::new(egui::include_image!("../../assets/icons/win-max.svg")).tint(text_color))).clicked() {
-                    let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
-                }
-                if ui.add(egui::Button::image(egui::Image::new(egui::include_image!("../../assets/icons/win-min.svg")).tint(text_color))).clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                }
-                
-                // The remaining space is draggable
-                let response = ui.allocate_response(ui.available_size(), egui::Sense::click_and_drag());
-                if response.dragged() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
-                if response.double_clicked() {
-                    let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
-                }
+                    ui.separator();
+                    ui.label(egui::RichText::new("Resize Existing Canvas").strong());
+                    ui.horizontal(|ui| {
+                        for (label, dim) in [
+                            ("16×16", 16),
+                            ("32×32", 32),
+                            ("64×64", 64),
+                            ("128×128", 128),
+                        ] {
+                            if ui.button(label).clicked() {
+                                app.pending_resize = Some((dim, dim));
+                                ui.close_menu();
+                            }
+                        }
+                    });
+
+                    ui.separator();
+                    ui.label(egui::RichText::new("Canvas & Viewport").strong());
+                    ui.checkbox(&mut app.show_grid, "Show Pixel Grid");
+                    ui.checkbox(&mut app.show_timeline, "Show Animation Timeline");
+                    if ui.button("Fit Canvas to Viewport").clicked() {
+                        app.auto_fit_requested = true;
+                        ui.close_menu();
+                    }
+
+                    ui.separator();
+                    ui.label(egui::RichText::new("Tool Defaults").strong());
+                    ui.horizontal(|ui| {
+                        ui.label("Fill Tolerance:");
+                        let mut tol = app.fill_tolerance as i32;
+                        if ui.add(egui::Slider::new(&mut tol, 0..=255)).changed() {
+                            app.fill_tolerance = tol as u8;
+                        }
+                    });
+                    ui.checkbox(&mut app.fill_contiguous, "Contiguous Fill");
+                    ui.checkbox(&mut app.shape_filled, "Fill Shapes (Rect/Ellipse)");
+
+                    ui.separator();
+                    if ui.button("Reset Viewport Pan").clicked() {
+                        app.pan_offset = egui::Vec2::ZERO;
+                        app.auto_fit_requested = true;
+                        ui.close_menu();
+                    }
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let text_color = ui.visuals().text_color();
+                    if ui
+                        .add(egui::Button::image(
+                            egui::Image::new(egui::include_image!(
+                                "../../assets/icons/win-close.svg"
+                            ))
+                            .tint(text_color),
+                        ))
+                        .clicked()
+                    {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    if ui
+                        .add(egui::Button::image(
+                            egui::Image::new(egui::include_image!(
+                                "../../assets/icons/win-max.svg"
+                            ))
+                            .tint(text_color),
+                        ))
+                        .clicked()
+                    {
+                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                    }
+                    if ui
+                        .add(egui::Button::image(
+                            egui::Image::new(egui::include_image!(
+                                "../../assets/icons/win-min.svg"
+                            ))
+                            .tint(text_color),
+                        ))
+                        .clicked()
+                    {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                    }
+
+                    // The remaining space is draggable
+                    let response =
+                        ui.allocate_response(ui.available_size(), egui::Sense::click_and_drag());
+                    if response.dragged() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
+                    if response.double_clicked() {
+                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                    }
+                });
             });
-        });
         });
 }
-

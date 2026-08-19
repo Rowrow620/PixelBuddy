@@ -504,10 +504,8 @@ fn draw_visibility_icon(painter: &egui::Painter, rect: Rect, visible: bool, colo
 }
 
 fn section_header(ui: &mut egui::Ui, title: &str) -> egui::Rect {
-    let (rect, _response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 24.0),
-        egui::Sense::hover(),
-    );
+    let (rect, _response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
 
     // Left accent bar
     ui.painter().rect_filled(
@@ -532,7 +530,7 @@ fn section_header(ui: &mut egui::Ui, title: &str) -> egui::Rect {
         Stroke::new(1.0_f32, crate::ui::theme::SEPARATOR_COLOR),
     );
     ui.add_space(4.0);
-    
+
     rect
 }
 
@@ -724,9 +722,14 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 let button_size = egui::vec2(32.0, 24.0);
                 let icon_size = egui::vec2(18.0, 18.0);
                 let text_color = ui.visuals().text_color();
-                
-                let add_img = egui::Image::new(egui::include_image!("../../assets/icons/plus.svg")).tint(text_color).fit_to_exact_size(icon_size);
-                if ui.add(egui::Button::image(add_img).min_size(button_size)).on_hover_text("Add Layer").clicked()
+
+                let add_img = egui::Image::new(egui::include_image!("../../assets/icons/plus.svg"))
+                    .tint(text_color)
+                    .fit_to_exact_size(icon_size);
+                if ui
+                    .add(egui::Button::image(add_img).min_size(button_size))
+                    .on_hover_text("Add Layer")
+                    .clicked()
                     && app.editor.mutate_document("Add layer", |document| {
                         document.add_layer();
                         true
@@ -736,8 +739,18 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     app.texture_dirty = true;
                 }
 
-                let del_img = egui::Image::new(egui::include_image!("../../assets/icons/trash.svg")).tint(text_color).fit_to_exact_size(icon_size);
-                if ui.add_enabled(layers_count > 1, egui::Button::image(del_img).min_size(button_size)).on_hover_text("Delete Layer").clicked() {
+                let del_img =
+                    egui::Image::new(egui::include_image!("../../assets/icons/trash.svg"))
+                        .tint(text_color)
+                        .fit_to_exact_size(icon_size);
+                if ui
+                    .add_enabled(
+                        layers_count > 1,
+                        egui::Button::image(del_img).min_size(button_size),
+                    )
+                    .on_hover_text("Delete Layer")
+                    .clicked()
+                {
                     let active_layer = app.editor.document().active_layer_index;
                     if app.editor.mutate_document("Delete layer", |document| {
                         if document.layers.len() <= 1 || active_layer >= document.layers.len() {
@@ -751,8 +764,14 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     }
                 }
 
-                let dup_img = egui::Image::new(egui::include_image!("../../assets/icons/copy.svg")).tint(text_color).fit_to_exact_size(icon_size);
-                if ui.add(egui::Button::image(dup_img).min_size(button_size)).on_hover_text("Duplicate Layer").clicked() {
+                let dup_img = egui::Image::new(egui::include_image!("../../assets/icons/copy.svg"))
+                    .tint(text_color)
+                    .fit_to_exact_size(icon_size);
+                if ui
+                    .add(egui::Button::image(dup_img).min_size(button_size))
+                    .on_hover_text("Duplicate Layer")
+                    .clicked()
+                {
                     let active_layer = app.editor.document().active_layer_index;
                     if app.editor.mutate_document("Duplicate layer", |document| {
                         if active_layer >= document.layers.len() {
@@ -766,8 +785,15 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     }
                 }
 
-                let up_img = egui::Image::new(egui::include_image!("../../assets/icons/arrow-up.svg")).tint(text_color).fit_to_exact_size(icon_size);
-                if ui.add(egui::Button::image(up_img).min_size(button_size)).on_hover_text("Move Up").clicked() {
+                let up_img =
+                    egui::Image::new(egui::include_image!("../../assets/icons/arrow-up.svg"))
+                        .tint(text_color)
+                        .fit_to_exact_size(icon_size);
+                if ui
+                    .add(egui::Button::image(up_img).min_size(button_size))
+                    .on_hover_text("Move Up")
+                    .clicked()
+                {
                     let idx = app.editor.document().active_layer_index;
                     if idx + 1 < layers_count
                         && app.editor.mutate_document("Move layer up", |document| {
@@ -780,8 +806,15 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     }
                 }
 
-                let down_img = egui::Image::new(egui::include_image!("../../assets/icons/arrow-down.svg")).tint(text_color).fit_to_exact_size(icon_size);
-                if ui.add(egui::Button::image(down_img).min_size(button_size)).on_hover_text("Move Down").clicked() {
+                let down_img =
+                    egui::Image::new(egui::include_image!("../../assets/icons/arrow-down.svg"))
+                        .tint(text_color)
+                        .fit_to_exact_size(icon_size);
+                if ui
+                    .add(egui::Button::image(down_img).min_size(button_size))
+                    .on_hover_text("Move Down")
+                    .clicked()
+                {
                     let idx = app.editor.document().active_layer_index;
                     if idx > 0
                         && app.editor.mutate_document("Move layer down", |document| {
@@ -802,7 +835,8 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             if layers_count > 0 {
                 let active = app.editor.document().active_layer_index;
 
-                ui.label("Opacity").on_hover_text("Layer opacity (0 = transparent, 1 = opaque)");
+                ui.label("Opacity")
+                    .on_hover_text("Layer opacity (0 = transparent, 1 = opaque)");
                 let mut opacity = app.editor.document().layers[active].opacity;
                 if ui
                     .add(egui::Slider::new(&mut opacity, 0.0..=1.0).fixed_decimals(2))
@@ -813,7 +847,10 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 }
 
                 let mut locked = app.editor.document().layers[active].locked;
-                if ui.checkbox(&mut locked, "Lock layer").on_hover_text("Prevent accidental edits to this layer").changed()
+                if ui
+                    .checkbox(&mut locked, "Lock layer")
+                    .on_hover_text("Prevent accidental edits to this layer")
+                    .changed()
                     && app.editor.mutate_document("Lock layer", |document| {
                         let Some(layer) = document.layers.get_mut(active) else {
                             return false;
@@ -828,7 +865,8 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     app.texture_dirty = true;
                 }
 
-                ui.label("Blend Mode").on_hover_text("How this layer's pixels combine with layers below");
+                ui.label("Blend Mode")
+                    .on_hover_text("How this layer's pixels combine with layers below");
                 let current_mode = app.editor.document().layers[active].blend_mode;
                 let mode_label = match current_mode {
                     BlendMode::Normal => "Normal",
@@ -864,24 +902,24 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             }
 
             ui.add_space(12.0);
-            
+
             let header_rect = section_header(ui, "Palette");
             let mut child_ui = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(header_rect)
-                    .layout(egui::Layout::right_to_left(egui::Align::Center))
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
             );
-            
+
             let mut color32 = egui::Color32::from_rgba_unmultiplied(
                 app.editor.primary_color[0],
                 app.editor.primary_color[1],
                 app.editor.primary_color[2],
                 app.editor.primary_color[3],
             );
-            
+
             // Add a little margin on the right so it doesn't touch the very edge
             child_ui.add_space(8.0);
-            
+
             if compact_primary_color_picker(&mut child_ui, &mut color32).changed() {
                 let arr = color32.to_array();
                 app.editor.set_primary_color(arr);
@@ -921,8 +959,16 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                     egui::Sense::click(),
                                 );
 
-                                ui.painter().rect(swatch_rect, 2.0, egui_color, stroke, egui::StrokeKind::Inside);
-                                let response = response.on_hover_text("Left-click: set primary · Right-click: options");
+                                ui.painter().rect(
+                                    swatch_rect,
+                                    2.0,
+                                    egui_color,
+                                    stroke,
+                                    egui::StrokeKind::Inside,
+                                );
+                                let response = response.on_hover_text(
+                                    "Left-click: set primary · Right-click: options",
+                                );
 
                                 if response.clicked() {
                                     app.editor.document_mut().palette.set_selected(i);
@@ -1115,10 +1161,15 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                         }
                                     }
                                 }
-                                
+
                                 for (idx, desc) in redo_descs.iter().enumerate() {
-                                    let text = format!("↷ {}. {}", undo_descs.len() + idx + 1, desc);
-                                    ui.label(egui::RichText::new(text).italics().color(egui::Color32::from_gray(100)));
+                                    let text =
+                                        format!("↷ {}. {}", undo_descs.len() + idx + 1, desc);
+                                    ui.label(
+                                        egui::RichText::new(text)
+                                            .italics()
+                                            .color(egui::Color32::from_gray(100)),
+                                    );
                                 }
                             }
                         });

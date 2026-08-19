@@ -383,22 +383,34 @@ impl PixelBuddyApp {
 
         let edges = [
             (
-                egui::Rect::from_min_max(egui::pos2(rect.min.x + edge, rect.min.y), egui::pos2(rect.max.x - edge, rect.min.y + edge)),
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x + edge, rect.min.y),
+                    egui::pos2(rect.max.x - edge, rect.min.y + edge),
+                ),
                 egui::ResizeDirection::North,
                 egui::CursorIcon::ResizeVertical,
             ),
             (
-                egui::Rect::from_min_max(egui::pos2(rect.min.x + edge, rect.max.y - edge), egui::pos2(rect.max.x - edge, rect.max.y)),
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x + edge, rect.max.y - edge),
+                    egui::pos2(rect.max.x - edge, rect.max.y),
+                ),
                 egui::ResizeDirection::South,
                 egui::CursorIcon::ResizeVertical,
             ),
             (
-                egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.min.y + edge), egui::pos2(rect.min.x + edge, rect.max.y - edge)),
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x, rect.min.y + edge),
+                    egui::pos2(rect.min.x + edge, rect.max.y - edge),
+                ),
                 egui::ResizeDirection::West,
                 egui::CursorIcon::ResizeHorizontal,
             ),
             (
-                egui::Rect::from_min_max(egui::pos2(rect.max.x - edge, rect.min.y + edge), egui::pos2(rect.max.x, rect.max.y - edge)),
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.max.x - edge, rect.min.y + edge),
+                    egui::pos2(rect.max.x, rect.max.y - edge),
+                ),
                 egui::ResizeDirection::East,
                 egui::CursorIcon::ResizeHorizontal,
             ),
@@ -411,24 +423,41 @@ impl PixelBuddyApp {
                 egui::CursorIcon::ResizeNwSe,
             ),
             (
-                egui::Rect::from_min_size(egui::pos2(rect.max.x - edge, rect.min.y), egui::vec2(edge, edge)),
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.max.x - edge, rect.min.y),
+                    egui::vec2(edge, edge),
+                ),
                 egui::ResizeDirection::NorthEast,
                 egui::CursorIcon::ResizeNeSw,
             ),
             (
-                egui::Rect::from_min_size(egui::pos2(rect.min.x, rect.max.y - edge), egui::vec2(edge, edge)),
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.min.x, rect.max.y - edge),
+                    egui::vec2(edge, edge),
+                ),
                 egui::ResizeDirection::SouthWest,
                 egui::CursorIcon::ResizeNeSw,
             ),
             (
-                egui::Rect::from_min_size(egui::pos2(rect.max.x - edge, rect.max.y - edge), egui::vec2(edge, edge)),
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.max.x - edge, rect.max.y - edge),
+                    egui::vec2(edge, edge),
+                ),
                 egui::ResizeDirection::SouthEast,
                 egui::CursorIcon::ResizeNwSe,
             ),
         ];
 
-        for (id_str, rect, dir, cursor) in edges.into_iter().zip(["n", "s", "w", "e"]).map(|((r, d, c), id)| (id, r, d, c))
-            .chain(corners.into_iter().zip(["nw", "ne", "sw", "se"]).map(|((r, d, c), id)| (id, r, d, c)))
+        for (id_str, rect, dir, cursor) in edges
+            .into_iter()
+            .zip(["n", "s", "w", "e"])
+            .map(|((r, d, c), id)| (id, r, d, c))
+            .chain(
+                corners
+                    .into_iter()
+                    .zip(["nw", "ne", "sw", "se"])
+                    .map(|((r, d, c), id)| (id, r, d, c)),
+            )
         {
             let id = egui::Id::new("resize_edge").with(id_str);
             // We must use an Area to put the interact rect on top of everything
@@ -1399,7 +1428,7 @@ impl eframe::App for PixelBuddyApp {
             self.set_active_tool(ToolType::Zoom);
         }
 
-                crate::ui::menu_bar::show(ctx, self);
+        crate::ui::menu_bar::show(ctx, self);
         crate::ui::toolbar::show(ctx, self);
         crate::ui::layers_panel::show(ctx, self);
         if self.show_timeline {
@@ -1483,10 +1512,10 @@ impl eframe::App for PixelBuddyApp {
                     ui.label(
                         egui::RichText::new("Warning: Resizing will clear your undo history!")
                             .color(egui::Color32::from_rgb(248, 113, 113))
-                            .strong()
+                            .strong(),
                     );
                     ui.label(format!("Are you sure you want to resize to {}x{}?", w, h));
-                    
+
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui.button("Resize").clicked() {

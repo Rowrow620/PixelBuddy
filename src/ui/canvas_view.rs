@@ -10,7 +10,7 @@ const MAX_CANVAS_ZOOM: f32 = 64.0;
 pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     egui::CentralPanel::default().show(ctx, |ui| {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
-        
+
         let painter = ui.painter_at(rect);
         let canvas_width = app.editor.document().width;
         let canvas_height = app.editor.document().height;
