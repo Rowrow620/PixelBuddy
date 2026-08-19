@@ -1,12 +1,12 @@
+pub mod animation;
 pub mod canvas;
 pub mod layer;
 pub mod palette;
-pub mod animation;
 
+pub use animation::{AnimationFrame, AnimationManager};
 pub use canvas::Canvas;
 pub use layer::{BlendMode, Layer};
 pub use palette::Palette;
-pub use animation::{AnimationManager, AnimationFrame};
 
 #[derive(Clone, Debug)]
 pub struct Document {
@@ -29,6 +29,14 @@ impl Document {
         }
     }
 
+    pub fn resize(&mut self, new_width: u32, new_height: u32) {
+        self.width = new_width;
+        self.height = new_height;
+        for layer in &mut self.layers {
+            layer.canvas.resize(new_width, new_height);
+        }
+    }
+
     pub fn active_layer(&self) -> &Layer {
         &self.layers[self.active_layer_index]
     }
@@ -46,7 +54,9 @@ impl Document {
     pub fn remove_layer(&mut self, index: usize) {
         if self.layers.len() > 1 && index < self.layers.len() {
             self.layers.remove(index);
-            if self.active_layer_index >= self.layers.len() {
+            if self.active_layer_index > index {
+                self.active_layer_index -= 1;
+            } else if self.active_layer_index >= self.layers.len() {
                 self.active_layer_index = self.layers.len() - 1;
             }
         }
@@ -81,25 +91,48 @@ impl Document {
 
     pub fn composite_preview(&self) -> Canvas {
         let mut final_canvas = Canvas::new(self.width, self.height);
-        
+
         for layer in &self.layers {
             if !layer.visible {
                 continue;
             }
-            
+
             for y in 0..self.height {
                 for x in 0..self.width {
                     let base_color = final_canvas.get_pixel(x, y);
                     let top_color = layer.canvas.get_pixel(x, y);
-                    
+
                     if top_color[3] > 0 {
-                        let blended = Layer::blend_mode_apply(base_color, top_color, layer.blend_mode, layer.opacity);
+                        let blended = Layer::blend_mode_apply(
+                            base_color,
+                            top_color,
+                            layer.blend_mode,
+                            layer.opacity,
+                        );
                         final_canvas.set_pixel(x, y, blended);
                     }
                 }
             }
         }
-        
+
         final_canvas
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Document;
+
+    #[test]
+    fn removing_a_lower_layer_keeps_the_same_active_layer_selected() {
+        let mut document = Document::new(2, 2);
+        document.add_layer();
+        document.add_layer();
+        document.active_layer_index = 2;
+
+        document.remove_layer(0);
+
+        assert_eq!(document.active_layer_index, 1);
+        assert_eq!(document.active_layer().name, "Layer 3");
     }
 }

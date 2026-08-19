@@ -7,6 +7,12 @@ pub struct Selection {
     pub active: bool,
 }
 
+impl Default for Selection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Selection {
     pub fn new() -> Self {
         Self {
@@ -37,10 +43,22 @@ impl Selection {
         x >= self.min_x() && x <= self.max_x() && y >= self.min_y() && y <= self.max_y()
     }
 
-    pub fn min_x(&self) -> i32 { self.x0.min(self.x1) }
-    pub fn max_x(&self) -> i32 { self.x0.max(self.x1) }
-    pub fn min_y(&self) -> i32 { self.y0.min(self.y1) }
-    pub fn max_y(&self) -> i32 { self.y0.max(self.y1) }
-    pub fn width(&self) -> u32 { (self.max_x() - self.min_x() + 1).max(1) as u32 }
-    pub fn height(&self) -> u32 { (self.max_y() - self.min_y() + 1).max(1) as u32 }
+    pub fn min_x(&self) -> i32 {
+        self.x0.min(self.x1)
+    }
+    pub fn max_x(&self) -> i32 {
+        self.x0.max(self.x1)
+    }
+    pub fn min_y(&self) -> i32 {
+        self.y0.min(self.y1)
+    }
+    pub fn max_y(&self) -> i32 {
+        self.y0.max(self.y1)
+    }
+    pub fn width(&self) -> u32 {
+        (self.max_x() - self.min_x() + 1).max(1) as u32
+    }
+    pub fn height(&self) -> u32 {
+        (self.max_y() - self.min_y() + 1).max(1) as u32
+    }
 }

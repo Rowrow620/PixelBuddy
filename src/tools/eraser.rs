@@ -1,5 +1,5 @@
-use super::PixelChange;
 use super::pencil::{draw_pixel, draw_stroke};
+use super::PixelChange;
 
 const TRANSPARENT: [u8; 4] = [0, 0, 0, 0];
 

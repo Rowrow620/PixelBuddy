@@ -1,5 +1,5 @@
-use super::PixelChange;
 use super::line::bresenham_line;
+use super::PixelChange;
 
 /// Draws a single pixel at the specified position.
 pub fn draw_pixel(x: u32, y: u32, color: [u8; 4]) -> Vec<PixelChange> {
@@ -11,7 +11,7 @@ pub fn draw_stroke(points: &[(u32, u32)], color: [u8; 4]) -> Vec<PixelChange> {
     if points.is_empty() {
         return Vec::new();
     }
-    
+
     let mut raw_points = Vec::new();
     for i in 0..points.len() - 1 {
         let (x0, y0) = points[i];
@@ -19,7 +19,7 @@ pub fn draw_stroke(points: &[(u32, u32)], color: [u8; 4]) -> Vec<PixelChange> {
         let mut line_pts = bresenham_line(x0 as i32, y0 as i32, x1 as i32, y1 as i32);
         // avoid duplicating points at the joints
         if i < points.len() - 1 {
-            line_pts.pop(); 
+            line_pts.pop();
         }
         raw_points.extend(line_pts);
     }
@@ -32,15 +32,18 @@ pub fn draw_stroke(points: &[(u32, u32)], color: [u8; 4]) -> Vec<PixelChange> {
     if !raw_points.is_empty() {
         filtered_points.push(raw_points[0]);
     }
-    
+
     for i in 1..raw_points.len() {
         let prev = filtered_points.last().unwrap();
         let curr = raw_points[i];
-        
+
         if i + 1 < raw_points.len() {
             let next = raw_points[i + 1];
-            if prev.0 != next.0 && prev.1 != next.1 && 
-               ((curr.0 == prev.0 && curr.1 == next.1) || (curr.0 == next.0 && curr.1 == prev.1)) {
+            if prev.0 != next.0
+                && prev.1 != next.1
+                && ((curr.0 == prev.0 && curr.1 == next.1)
+                    || (curr.0 == next.0 && curr.1 == prev.1))
+            {
                 // curr is a corner pixel, skip it
                 continue;
             }

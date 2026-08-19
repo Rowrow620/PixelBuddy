@@ -19,7 +19,12 @@ impl ClipboardBuffer {
                 (selection.max_y()).min(doc.height as i32 - 1) as u32,
             )
         } else {
-            (0, doc.width.saturating_sub(1), 0, doc.height.saturating_sub(1))
+            (
+                0,
+                doc.width.saturating_sub(1),
+                0,
+                doc.height.saturating_sub(1),
+            )
         };
 
         if min_x > max_x || min_y > max_y {
@@ -36,6 +41,10 @@ impl ClipboardBuffer {
             }
         }
 
-        Some(Self { width: w, height: h, pixels })
+        Some(Self {
+            width: w,
+            height: h,
+            pixels,
+        })
     }
 }
