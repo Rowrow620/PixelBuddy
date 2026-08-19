@@ -6,7 +6,7 @@ rust-version = "1.88"
 description = "A pixel art editor built in Rust"
 
 [dependencies]
-eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
 egui = "0.31"
 egui_extras = { version = "0.31", features = ["image", "svg"] }
 image = { version = "0.25", default-features = false, features = ["png", "gif"] }
