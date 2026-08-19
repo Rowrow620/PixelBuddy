@@ -1,4 +1,4 @@
-use egui::{Color32, Pos2, Rect, Stroke, Vec2};
+use egui::{Color32, Rect, Stroke, Vec2};
 use crate::app::PixelBuddyApp;
 use crate::editor::ToolType;
 
@@ -13,7 +13,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 let tools: &[(ToolType, &str)] = &[
                     (ToolType::Hand, "Hand / Pan (H)"),
                     (ToolType::Zoom, "Zoom In/Out (Z)"),
-                    (ToolType::Marquee, "Marquee Selection (M)"),
+                    (ToolType::Marquee, "Marquee Selection (M)\nRight-click or Ctrl+D to deselect"),
                     (ToolType::Move, "Move Tool (V)"),
                     (ToolType::Pencil, "Pencil / Brush (B)"),
                     (ToolType::Eraser, "Eraser (E)"),
@@ -51,7 +51,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         Color32::from_gray(210)
                     };
                     
-                    draw_monochrome_icon(ui.painter(), rect, tool, icon_color);
+                    draw_monochrome_icon(ui, rect, tool, icon_color);
 
                     if response.on_hover_text(tooltip).clicked() {
                         app.editor.set_active_tool(tool);
@@ -62,89 +62,22 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
         });
 }
 
-fn draw_monochrome_icon(painter: &egui::Painter, rect: Rect, tool: ToolType, color: Color32) {
-    let center = rect.center();
-    let stroke = Stroke::new(1.5_f32, color);
+fn draw_monochrome_icon(ui: &mut egui::Ui, rect: Rect, tool: ToolType, color: Color32) {
+    let img = match tool {
+        ToolType::Hand => egui::include_image!("../../assets/icons/hand.svg"),
+        ToolType::Zoom => egui::include_image!("../../assets/icons/zoom.svg"),
+        ToolType::Marquee => egui::include_image!("../../assets/icons/marquee.svg"),
+        ToolType::Move => egui::include_image!("../../assets/icons/move.svg"),
+        ToolType::Pencil => egui::include_image!("../../assets/icons/pencil.svg"),
+        ToolType::Eraser => egui::include_image!("../../assets/icons/eraser.svg"),
+        ToolType::Line => egui::include_image!("../../assets/icons/line.svg"),
+        ToolType::Rectangle => egui::include_image!("../../assets/icons/rectangle.svg"),
+        ToolType::Ellipse => egui::include_image!("../../assets/icons/ellipse.svg"),
+        ToolType::Fill => egui::include_image!("../../assets/icons/fill.svg"),
+        ToolType::Eyedropper => egui::include_image!("../../assets/icons/eyedropper.svg"),
+    };
 
-    match tool {
-        ToolType::Hand => {
-            // 4-way directional arrow compass (matching Move icon style)
-            let r = 7.0_f32;
-            painter.line_segment([Pos2::new(center.x, center.y - r), Pos2::new(center.x, center.y + r)], stroke);
-            painter.line_segment([Pos2::new(center.x - r, center.y), Pos2::new(center.x + r, center.y)], stroke);
-            // Up arrow tip
-            painter.line_segment([Pos2::new(center.x - 2.5, center.y - r + 2.5), Pos2::new(center.x, center.y - r)], stroke);
-            painter.line_segment([Pos2::new(center.x + 2.5, center.y - r + 2.5), Pos2::new(center.x, center.y - r)], stroke);
-            // Down arrow tip
-            painter.line_segment([Pos2::new(center.x - 2.5, center.y + r - 2.5), Pos2::new(center.x, center.y + r)], stroke);
-            painter.line_segment([Pos2::new(center.x + 2.5, center.y + r - 2.5), Pos2::new(center.x, center.y + r)], stroke);
-            // Left arrow tip
-            painter.line_segment([Pos2::new(center.x - r + 2.5, center.y - 2.5), Pos2::new(center.x - r, center.y)], stroke);
-            painter.line_segment([Pos2::new(center.x - r + 2.5, center.y + 2.5), Pos2::new(center.x - r, center.y)], stroke);
-            // Right arrow tip
-            painter.line_segment([Pos2::new(center.x + r - 2.5, center.y - 2.5), Pos2::new(center.x + r, center.y)], stroke);
-            painter.line_segment([Pos2::new(center.x + r - 2.5, center.y + 2.5), Pos2::new(center.x + r, center.y)], stroke);
-        }
-        ToolType::Zoom => {
-            // Magnifying Glass
-            let lens_center = Pos2::new(center.x - 2.0, center.y - 2.0);
-            painter.circle_stroke(lens_center, 5.0, stroke);
-            painter.line_segment([Pos2::new(center.x + 1.5, center.y + 1.5), Pos2::new(center.x + 6.5, center.y + 6.5)], stroke);
-        }
-        ToolType::Marquee => {
-            // Dashed Marquee Rectangle
-            let box_rect = Rect::from_center_size(center, Vec2::new(12.0, 12.0));
-            painter.rect_stroke(box_rect, 0, Stroke::new(1.0_f32, color), egui::StrokeKind::Middle);
-            // Inner corner accents
-            painter.circle_filled(Pos2::new(center.x - 4.0, center.y - 4.0), 1.0, color);
-            painter.circle_filled(Pos2::new(center.x + 4.0, center.y + 4.0), 1.0, color);
-        }
-        ToolType::Move => {
-            // Solid Move Arrow Cross
-            let r = 6.0_f32;
-            painter.line_segment([Pos2::new(center.x, center.y - r), Pos2::new(center.x, center.y + r)], stroke);
-            painter.line_segment([Pos2::new(center.x - r, center.y), Pos2::new(center.x + r, center.y)], stroke);
-            // Arrow heads
-            painter.line_segment([Pos2::new(center.x - 2.0, center.y - r + 2.0), Pos2::new(center.x, center.y - r)], stroke);
-            painter.line_segment([Pos2::new(center.x + 2.0, center.y - r + 2.0), Pos2::new(center.x, center.y - r)], stroke);
-            painter.line_segment([Pos2::new(center.x - 2.0, center.y + r - 2.0), Pos2::new(center.x, center.y + r)], stroke);
-            painter.line_segment([Pos2::new(center.x + 2.0, center.y + r - 2.0), Pos2::new(center.x, center.y + r)], stroke);
-        }
-        ToolType::Pencil => {
-            // Slanted Pencil
-            painter.line_segment([Pos2::new(center.x - 5.0, center.y + 5.0), Pos2::new(center.x + 4.0, center.y - 4.0)], stroke);
-            painter.line_segment([Pos2::new(center.x - 5.0, center.y + 5.0), Pos2::new(center.x - 7.0, center.y + 7.0)], stroke);
-            painter.line_segment([Pos2::new(center.x + 2.0, center.y - 6.0), Pos2::new(center.x + 6.0, center.y - 2.0)], stroke);
-        }
-        ToolType::Eraser => {
-            // Block Eraser
-            let eraser_rect = Rect::from_center_size(center, Vec2::new(12.0, 10.0));
-            painter.rect_stroke(eraser_rect, 2, stroke, egui::StrokeKind::Middle);
-            painter.line_segment([Pos2::new(center.x - 1.0, center.y - 5.0), Pos2::new(center.x - 1.0, center.y + 5.0)], stroke);
-        }
-        ToolType::Line => {
-            // Diagonal Line
-            painter.line_segment([Pos2::new(center.x - 6.0, center.y + 6.0), Pos2::new(center.x + 6.0, center.y - 6.0)], stroke);
-        }
-        ToolType::Rectangle => {
-            // Box
-            let box_rect = Rect::from_center_size(center, Vec2::new(12.0, 12.0));
-            painter.rect_stroke(box_rect, 0, stroke, egui::StrokeKind::Middle);
-        }
-        ToolType::Ellipse => {
-            // Circle
-            painter.circle_stroke(center, 6.0, stroke);
-        }
-        ToolType::Fill => {
-            // Paint Bucket / Fill target
-            let bucket_rect = Rect::from_center_size(Pos2::new(center.x - 1.0, center.y - 1.0), Vec2::new(10.0, 10.0));
-            painter.rect_stroke(bucket_rect, 1, stroke, egui::StrokeKind::Middle);
-            painter.circle_filled(Pos2::new(center.x + 5.0, center.y + 5.0), 2.5, color);
-        }
-        ToolType::Eyedropper => {
-            // Pipette sampler
-            painter.circle_stroke(center, 4.0, stroke);
-            painter.line_segment([Pos2::new(center.x + 3.0, center.y + 3.0), Pos2::new(center.x + 7.0, center.y + 7.0)], stroke);
-        }
-    }
+    let icon_rect = rect.shrink(6.0);
+    let image = egui::Image::new(img).tint(color);
+    image.paint_at(ui, icon_rect);
 }

@@ -1,34 +1,42 @@
 pub mod app;
 pub mod document;
 pub mod editor;
+pub mod io;
 pub mod tools;
 pub mod ui;
-pub mod io;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     env_logger::init();
-    
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")).ok();
+
+    let icon_result = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"));
+    if let Err(e) = &icon_result {
+        println!("Failed to load icon: {:?}", e);
+    }
+    let icon = icon_result.ok();
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([1280.0, 800.0])
-        .with_title("PixelBuddy");
+        .with_inner_size([1100.0, 800.0])
+        .with_title("PixelBuddy")
+        .with_decorations(false);
 
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
-    
+
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
-    
+
     eframe::run_native(
         "PixelBuddy",
         options,
         Box::new(|cc| {
             ui::theme::setup_theme(&cc.egui_ctx);
-            Ok(Box::new(app::PixelBuddyApp::new(64, 64)))
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+            Ok(Box::new(app::PixelBuddyApp::from_creation_context(
+                cc, 64, 64,
+            )))
         }),
     )
 }
@@ -57,11 +65,14 @@ fn main() {
                 web_options,
                 Box::new(|cc| {
                     ui::theme::setup_theme(&cc.egui_ctx);
-                    Ok(Box::new(app::PixelBuddyApp::new(64, 64)))
+                    egui_extras::install_image_loaders(&cc.egui_ctx);
+                    Ok(Box::new(app::PixelBuddyApp::from_creation_context(
+                        cc, 64, 64,
+                    )))
                 }),
             )
             .await;
-            
+
         // Log errors if WebRunner failed
         if let Err(e) = start_result {
             log::error!("Failed to start eframe WebRunner: {:?}", e);
