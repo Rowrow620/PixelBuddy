@@ -204,6 +204,7 @@ pub struct PixelBuddyApp {
     allow_close: bool,
     pub show_spritesheet_import_dialog: bool,
     pub spritesheet_import_data: Option<(Vec<u8>, String)>,
+    pub spritesheet_import_texture: Option<egui::TextureHandle>,
     pub spritesheet_import_columns: String,
     pub spritesheet_import_rows: String,
     pub spritesheet_import_error: Option<String>,
@@ -265,6 +266,7 @@ impl PixelBuddyApp {
             allow_close: false,
             show_spritesheet_import_dialog: false,
             spritesheet_import_data: None,
+            spritesheet_import_texture: None,
             spritesheet_import_columns: "1".to_string(),
             spritesheet_import_rows: "1".to_string(),
             spritesheet_import_error: None,
@@ -1087,6 +1089,26 @@ impl PixelBuddyApp {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
+                if let Some(texture) = &self.spritesheet_import_texture {
+                    ui.vertical_centered(|ui| {
+                        let mut size = texture.size_vec2();
+                        let max_size = 256.0;
+                        if size.x > max_size || size.y > max_size {
+                            let scale = (max_size / size.x).min(max_size / size.y);
+                            size *= scale;
+                        }
+                        
+                        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                        ui.painter().image(
+                            texture.id(),
+                            rect,
+                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                            egui::Color32::WHITE
+                        );
+                    });
+                    ui.add_space(8.0);
+                }
+
                 ui.label(format!("File: {}", self.spritesheet_import_data.as_ref().map(|d| d.1.as_str()).unwrap_or("Unknown")));
                 ui.add_space(8.0);
                 
@@ -1607,10 +1629,23 @@ impl eframe::App for PixelBuddyApp {
                 }
                 FileAction::OpenedSpriteSheet { data, file_name } => {
                     self.show_spritesheet_import_dialog = true;
-                    self.spritesheet_import_data = Some((data, file_name));
                     self.spritesheet_import_columns = "1".to_string();
                     self.spritesheet_import_rows = "1".to_string();
                     self.spritesheet_import_error = None;
+                    
+                    if let Ok(img) = image::load_from_memory(&data) {
+                        let rgba = img.to_rgba8();
+                        let size = [rgba.width() as _, rgba.height() as _];
+                        let pixels = rgba.into_raw();
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                        self.spritesheet_import_texture = Some(ctx.load_texture(
+                            "spritesheet_preview",
+                            color_image,
+                            egui::TextureOptions::NEAREST,
+                        ));
+                    }
+                    
+                    self.spritesheet_import_data = Some((data, file_name));
                 }
                 FileAction::OpenedProject { data, file_name } => {
                     match crate::io::project::decode_editor_bytes(&data) {
