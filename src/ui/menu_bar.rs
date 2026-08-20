@@ -28,6 +28,10 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         io::trigger_open_file(app.io_handler.sender.clone());
                         ui.close_menu();
                     }
+                    if ui.button("Import Sprite Sheet...").clicked() {
+                        io::trigger_open_spritesheet(app.io_handler.sender.clone());
+                        ui.close_menu();
+                    }
                     if ui.button("Export PNG...").clicked() {
                         app.open_png_export_dialog();
                         ui.close_menu();

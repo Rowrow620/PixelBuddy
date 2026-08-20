@@ -62,6 +62,10 @@ enum PendingReplacement {
         editor: EditorState,
         file_name: String,
     },
+    ImportedAnimation {
+        animation: crate::document::AnimationManager,
+        file_name: String,
+    },
 }
 
 /// The flattened raster formats that can be enlarged at export time.
@@ -198,6 +202,11 @@ pub struct PixelBuddyApp {
     recovery_snapshot: Option<String>,
     show_close_confirmation: bool,
     allow_close: bool,
+    pub show_spritesheet_import_dialog: bool,
+    pub spritesheet_import_data: Option<(Vec<u8>, String)>,
+    pub spritesheet_import_columns: String,
+    pub spritesheet_import_rows: String,
+    pub spritesheet_import_error: Option<String>,
 }
 
 impl PixelBuddyApp {
@@ -240,6 +249,11 @@ impl PixelBuddyApp {
             recovery_snapshot: None,
             show_close_confirmation: false,
             allow_close: false,
+            show_spritesheet_import_dialog: false,
+            spritesheet_import_data: None,
+            spritesheet_import_columns: "1".to_string(),
+            spritesheet_import_rows: "1".to_string(),
+            spritesheet_import_error: None,
         }
     }
 
@@ -319,6 +333,18 @@ impl PixelBuddyApp {
                 editor.mark_saved();
                 self.editor = editor;
                 self.status_message = Some((format!("Opened {file_name}"), false));
+            }
+            PendingReplacement::ImportedAnimation {
+                animation,
+                file_name,
+            } => {
+                self.editor.animation = animation;
+                self.editor.history.clear();
+                self.editor.mark_saved(); 
+                self.status_message = Some((
+                    format!("Imported sprite sheet {file_name}"),
+                    false,
+                ));
             }
         }
     }
@@ -886,6 +912,9 @@ impl PixelBuddyApp {
         }
         self.show_recovery_dialog(ctx);
         self.show_replace_confirmation(ctx);
+        if self.show_spritesheet_import_dialog {
+            self.show_spritesheet_import_dialog_ui(ctx);
+        }
     }
 
     fn intercept_dirty_close_request(&mut self, ctx: &egui::Context) {
@@ -1026,6 +1055,77 @@ impl PixelBuddyApp {
             }
         } else if cancel {
             self.pending_replacement = None;
+        }
+    }
+
+    fn show_spritesheet_import_dialog_ui(&mut self, ctx: &egui::Context) {
+        let mut close = false;
+        let mut perform_import = false;
+
+        egui::Window::new("Import Sprite Sheet")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(format!("File: {}", self.spritesheet_import_data.as_ref().map(|d| d.1.as_str()).unwrap_or("Unknown")));
+                ui.add_space(8.0);
+                
+                ui.horizontal(|ui| {
+                    ui.label("Columns (Horizontal Frames):");
+                    ui.text_edit_singleline(&mut self.spritesheet_import_columns);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Rows (Vertical Frames):");
+                    ui.text_edit_singleline(&mut self.spritesheet_import_rows);
+                });
+
+                if let Some(err) = &self.spritesheet_import_error {
+                    ui.add_space(8.0);
+                    ui.colored_label(egui::Color32::from_rgb(248, 113, 113), err);
+                }
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                    if ui.button("Import").clicked() {
+                        perform_import = true;
+                    }
+                });
+            });
+
+        if close {
+            self.show_spritesheet_import_dialog = false;
+            self.spritesheet_import_data = None;
+            self.spritesheet_import_error = None;
+        } else if perform_import {
+            let cols = self.spritesheet_import_columns.parse::<u32>();
+            let rows = self.spritesheet_import_rows.parse::<u32>();
+            
+            if cols.is_err() || rows.is_err() || *cols.as_ref().unwrap_or(&0) == 0 || *rows.as_ref().unwrap_or(&0) == 0 {
+                self.spritesheet_import_error = Some("Columns and Rows must be positive integers.".to_string());
+                return;
+            }
+            
+            let (cols, rows) = (cols.unwrap(), rows.unwrap());
+            
+            if let Some((data, file_name)) = self.spritesheet_import_data.take() {
+                match crate::io::spritesheet::import_spritesheet(&data, &file_name, cols, rows) {
+                    Ok(animation) => {
+                        self.show_spritesheet_import_dialog = false;
+                        self.spritesheet_import_error = None;
+                        self.request_replacement(PendingReplacement::ImportedAnimation {
+                            animation,
+                            file_name,
+                        });
+                    }
+                    Err(e) => {
+                        self.spritesheet_import_error = Some(e.to_string());
+                        self.spritesheet_import_data = Some((data, file_name));
+                    }
+                }
+            }
         }
     }
 
@@ -1484,6 +1584,13 @@ impl eframe::App for PixelBuddyApp {
                             self.status_message = Some((error.to_string(), true));
                         }
                     }
+                }
+                FileAction::OpenedSpriteSheet { data, file_name } => {
+                    self.show_spritesheet_import_dialog = true;
+                    self.spritesheet_import_data = Some((data, file_name));
+                    self.spritesheet_import_columns = "1".to_string();
+                    self.spritesheet_import_rows = "1".to_string();
+                    self.spritesheet_import_error = None;
                 }
                 FileAction::OpenedProject { data, file_name } => {
                     match crate::io::project::decode_editor_bytes(&data) {
