@@ -245,11 +245,10 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         finish_canvas_action(app, cx, cy, ctx.input(|i| i.modifiers.shift));
                     }
 
-                    if response.clicked_by(egui::PointerButton::Secondary) {
-                        if app.editor.active_tool == ToolType::Marquee {
+                    if response.clicked_by(egui::PointerButton::Secondary)
+                        && app.editor.active_tool == ToolType::Marquee {
                             app.editor.selection.deselect();
                         }
-                    }
 
                     // Handle single click for fill, eyedropper, or single-pixel draw
                     if response.clicked_by(egui::PointerButton::Primary) && !app.is_drawing {

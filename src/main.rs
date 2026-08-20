@@ -11,7 +11,7 @@ fn main() -> eframe::Result {
 
     let icon_result = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"));
     if let Err(e) = &icon_result {
-        println!("Failed to load icon: {:?}", e);
+        println!("Failed to load icon: {e:?}");
     }
     let icon = icon_result.ok();
     let mut viewport = egui::ViewportBuilder::default()
@@ -75,7 +75,7 @@ fn main() {
 
         // Log errors if WebRunner failed
         if let Err(e) = start_result {
-            log::error!("Failed to start eframe WebRunner: {:?}", e);
+            log::error!("Failed to start eframe WebRunner: {e:?}");
         }
     });
 }
