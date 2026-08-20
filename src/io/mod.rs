@@ -428,10 +428,12 @@ pub enum FileAction {
     OpenedImage {
         data: Vec<u8>,
         file_name: String,
+        as_new_project: bool,
     },
     OpenedSpriteSheet {
         data: Vec<u8>,
         file_name: String,
+        as_new_project: bool,
     },
     /// Raw UTF-8 project bytes selected by the user. The app decodes these
     /// only after confirming that replacing dirty work is intentional.
@@ -465,7 +467,7 @@ impl IoHandler {
     }
 }
 
-pub fn trigger_open_file(sender: Sender<FileAction>) {
+pub fn trigger_open_file(sender: Sender<FileAction>, as_new_project: bool) {
     let task = async move {
         if let Some(file) = AsyncFileDialog::new()
             .add_filter("Images", &["png", "webp"])
@@ -474,7 +476,7 @@ pub fn trigger_open_file(sender: Sender<FileAction>) {
         {
             let file_name = file.file_name();
             let data = file.read().await;
-            let _ = sender.send(FileAction::OpenedImage { data, file_name });
+            let _ = sender.send(FileAction::OpenedImage { data, file_name, as_new_project });
         }
     };
 
@@ -487,7 +489,7 @@ pub fn trigger_open_file(sender: Sender<FileAction>) {
     });
 }
 
-pub fn trigger_open_spritesheet(sender: Sender<FileAction>) {
+pub fn trigger_open_spritesheet(sender: Sender<FileAction>, as_new_project: bool) {
     let task = async move {
         if let Some(file) = AsyncFileDialog::new()
             .add_filter("Images", &["png", "webp"])
@@ -496,7 +498,7 @@ pub fn trigger_open_spritesheet(sender: Sender<FileAction>) {
         {
             let file_name = file.file_name();
             let data = file.read().await;
-            let _ = sender.send(FileAction::OpenedSpriteSheet { data, file_name });
+            let _ = sender.send(FileAction::OpenedSpriteSheet { data, file_name, as_new_project });
         }
     };
 
