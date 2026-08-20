@@ -1157,6 +1157,7 @@ impl PixelBuddyApp {
                     Ok(animation) => {
                         self.show_spritesheet_import_dialog = false;
                         self.spritesheet_import_error = None;
+                        self.show_timeline = true; // Automatically show timeline when an animation is imported
                         self.request_replacement(PendingReplacement::ImportedAnimation {
                             animation,
                             file_name,
