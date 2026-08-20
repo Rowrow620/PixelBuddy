@@ -148,6 +148,20 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 });
 
                 ui.menu_button("View", |ui| {
+                    ui.menu_button("Tile Mode", |ui| {
+                        if ui.radio_value(&mut app.tile_mode, crate::app::TileMode::None, "None").clicked() {
+                            ui.close_menu();
+                        }
+                        if ui.radio_value(&mut app.tile_mode, crate::app::TileMode::Both, "Tiled In Both Axis").clicked() {
+                            ui.close_menu();
+                        }
+                        if ui.radio_value(&mut app.tile_mode, crate::app::TileMode::XAxis, "Tiled In X Axis").clicked() {
+                            ui.close_menu();
+                        }
+                        if ui.radio_value(&mut app.tile_mode, crate::app::TileMode::YAxis, "Tiled In Y Axis").clicked() {
+                            ui.close_menu();
+                        }
+                    });
                     if ui.checkbox(&mut app.show_grid, "Toggle Grid").clicked() {
                         ui.close_menu();
                     }

@@ -212,6 +212,15 @@ pub struct PixelBuddyApp {
     pub horizontal_guides: Vec<i32>,
     pub vertical_guides: Vec<i32>,
     pub dragging_guide: Option<(bool, usize)>,
+    pub tile_mode: TileMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TileMode {
+    None,
+    Both,
+    XAxis,
+    YAxis,
 }
 
 impl PixelBuddyApp {
@@ -264,6 +273,7 @@ impl PixelBuddyApp {
             horizontal_guides: Vec::new(),
             vertical_guides: Vec::new(),
             dragging_guide: None,
+            tile_mode: TileMode::None,
         }
     }
 
