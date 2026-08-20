@@ -478,10 +478,7 @@ pub fn trigger_open_file(sender: Sender<FileAction>) {
 
 /// Encodes the current editor state as a PixelBuddy project and prompts the
 /// user to save it.
-pub fn trigger_save_project(
-    editor: &crate::editor::EditorState,
-    sender: Sender<FileAction>,
-) {
+pub fn trigger_save_project(editor: &crate::editor::EditorState, sender: Sender<FileAction>) {
     if let Ok(project_string) = project::encode_editor(editor) {
         let request = ExportRequest::project(project_string.into_bytes())
             .with_source_revision(editor.revision());

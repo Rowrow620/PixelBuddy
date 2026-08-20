@@ -627,7 +627,7 @@ impl PixelBuddyApp {
         };
         if layer.locked {
             self.status_message = Some(("Layer is locked".to_owned(), true));
-            
+
             return;
         }
         // A tool can emit multiple writes to the same pixel (notably Move).
@@ -636,7 +636,8 @@ impl PixelBuddyApp {
             .into_iter()
             .map(|(x, y, color)| ((x, y), color))
             .collect();
-        let (has_sel, sel_min_x, sel_max_x, sel_min_y, sel_max_y) = if self.editor.selection.active {
+        let (has_sel, sel_min_x, sel_max_x, sel_min_y, sel_max_y) = if self.editor.selection.active
+        {
             (
                 true,
                 self.editor.selection.min_x(),
@@ -657,9 +658,9 @@ impl PixelBuddyApp {
                             || (x as i32) > sel_max_x
                             || (y as i32) < sel_min_y
                             || (y as i32) > sel_max_y)
-                        {
-                            continue;
-                        }
+                    {
+                        continue;
+                    }
                     let old_color = layer.canvas.get_pixel(x, y);
                     if old_color != new_color {
                         history_changes.push((x, y, old_color, new_color));
@@ -683,7 +684,7 @@ impl PixelBuddyApp {
         };
         if layer.locked {
             self.status_message = Some(("Layer is locked".to_owned(), true));
-            
+
             return;
         }
 
@@ -696,7 +697,12 @@ impl PixelBuddyApp {
                 self.editor.selection.max_y(),
             )
         } else {
-            (0, self.editor.document().width.saturating_sub(1) as i32, 0, self.editor.document().height.saturating_sub(1) as i32)
+            (
+                0,
+                self.editor.document().width.saturating_sub(1) as i32,
+                0,
+                self.editor.document().height.saturating_sub(1) as i32,
+            )
         };
 
         for y in min_y..=max_y {
@@ -763,15 +769,15 @@ impl PixelBuddyApp {
             }
             let width = doc.width;
             let height = doc.height;
-            
+
             // Render active over the one below it
             let top_layer = doc.layers[active].clone();
             let bottom_layer = &mut doc.layers[active + 1];
-            
+
             if bottom_layer.locked {
                 return false;
             }
-            
+
             for y in 0..height {
                 for x in 0..width {
                     let bottom_px = bottom_layer.canvas.get_pixel(x, y);
@@ -1541,7 +1547,12 @@ impl eframe::App for PixelBuddyApp {
             self.editor.selection.deselect();
         }
         if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::A)) {
-            self.editor.selection.set_rect(0, 0, (self.editor.document().width as i32) - 1, (self.editor.document().height as i32) - 1);
+            self.editor.selection.set_rect(
+                0,
+                0,
+                (self.editor.document().width as i32) - 1,
+                (self.editor.document().height as i32) - 1,
+            );
         }
         if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C)) {
             let clipboard = crate::editor::clipboard::ClipboardBuffer::copy(
@@ -1586,22 +1597,26 @@ impl eframe::App for PixelBuddyApp {
         }
 
         // Brush size
-        if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket))
-            && self.editor.brush_size > 1 {
-                self.editor.brush_size -= 1;
-            }
-        if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket))
-            && self.editor.brush_size < 8 {
-                self.editor.brush_size += 1;
-            }
+        if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket)) && self.editor.brush_size > 1 {
+            self.editor.brush_size -= 1;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket)) && self.editor.brush_size < 8 {
+            self.editor.brush_size += 1;
+        }
 
         // Frame nav
         if ctx.input(|i| i.key_pressed(egui::Key::Comma)) {
-            let count = self.editor.animation.frames.len(); self.editor.animation.select_frame((self.editor.animation.current_frame_index + count - 1) % count);
+            let count = self.editor.animation.frames.len();
+            self.editor
+                .animation
+                .select_frame((self.editor.animation.current_frame_index + count - 1) % count);
             self.texture_dirty = true;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Period)) {
-            let count = self.editor.animation.frames.len(); self.editor.animation.select_frame((self.editor.animation.current_frame_index + 1) % count);
+            let count = self.editor.animation.frames.len();
+            self.editor
+                .animation
+                .select_frame((self.editor.animation.current_frame_index + 1) % count);
             self.texture_dirty = true;
         }
 
@@ -1760,10 +1775,7 @@ impl eframe::App for PixelBuddyApp {
                     ui.heading("PixelBuddy");
                     ui.label("A lightweight, cross-platform pixel art editor built in Rust.");
                     ui.add_space(8.0);
-                    ui.hyperlink_to(
-                        "View on GitHub",
-                        "https://github.com/rowrow620/PixelBuddy",
-                    );
+                    ui.hyperlink_to("View on GitHub", "https://github.com/rowrow620/PixelBuddy");
                     ui.add_space(8.0);
                     if ui.button("Close").clicked() {
                         self.show_about_dialog = false;
