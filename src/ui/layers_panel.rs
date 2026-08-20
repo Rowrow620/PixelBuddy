@@ -637,11 +637,16 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
             .add(egui::Button::image(add_img).min_size(button_size))
             .on_hover_text("Add Layer")
             .clicked()
-            && app.editor.mutate_document("Add layer", |document| {
-                document.add_layer();
-                true
-            })
         {
+            let name = format!("Layer {}", layers_count + 1);
+            let width = app.editor.document().width;
+            let height = app.editor.document().height;
+            for frame in &mut app.editor.animation.frames {
+                frame.document.layers.push(crate::document::Layer::new(name.clone(), width, height));
+            }
+            app.editor.document_mut().active_layer_index = layers_count;
+            app.editor.history.clear();
+            
             clear_layer_rename_draft(ctx);
             app.texture_dirty = true;
         }
@@ -659,13 +664,16 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
             .clicked()
         {
             let active_layer = app.editor.document().active_layer_index;
-            if app.editor.mutate_document("Delete layer", |document| {
-                if document.layers.len() <= 1 || active_layer >= document.layers.len() {
-                    return false;
+            if layers_count > 1 {
+                for frame in &mut app.editor.animation.frames {
+                    if frame.document.layers.len() > active_layer {
+                        frame.document.layers.remove(active_layer);
+                        if frame.document.active_layer_index >= frame.document.layers.len() {
+                            frame.document.active_layer_index = frame.document.layers.len().saturating_sub(1);
+                        }
+                    }
                 }
-                document.remove_layer(active_layer);
-                true
-            }) {
+                app.editor.history.clear();
                 clear_layer_rename_draft(ctx);
                 app.texture_dirty = true;
             }
@@ -680,16 +688,17 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
             .clicked()
         {
             let active_layer = app.editor.document().active_layer_index;
-            if app.editor.mutate_document("Duplicate layer", |document| {
-                if active_layer >= document.layers.len() {
-                    return false;
+            for frame in &mut app.editor.animation.frames {
+                if active_layer < frame.document.layers.len() {
+                    let mut cloned = frame.document.layers[active_layer].clone();
+                    cloned.name = format!("{} copy", cloned.name);
+                    frame.document.layers.insert(active_layer + 1, cloned);
                 }
-                document.duplicate_layer(active_layer);
-                true
-            }) {
-                clear_layer_rename_draft(ctx);
-                app.texture_dirty = true;
             }
+            app.editor.document_mut().active_layer_index = active_layer + 1;
+            app.editor.history.clear();
+            clear_layer_rename_draft(ctx);
+            app.texture_dirty = true;
         }
 
         let up_img =

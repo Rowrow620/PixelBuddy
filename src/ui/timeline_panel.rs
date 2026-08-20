@@ -152,6 +152,40 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                 );
                             });
                         }
+                        
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            let icon_size = egui::vec2(14.0, 14.0);
+                            let text_color = ui.visuals().text_color();
+                            let add_img = egui::Image::new(egui::include_image!("../../assets/icons/plus.svg")).tint(text_color).fit_to_exact_size(icon_size);
+                            if ui.add(egui::Button::image(add_img)).on_hover_text("Add Layer").clicked() {
+                                let name = format!("Layer {}", layers_count + 1);
+                                let width = app.editor.document().width;
+                                let height = app.editor.document().height;
+                                for frame in &mut app.editor.animation.frames {
+                                    frame.document.layers.push(crate::document::Layer::new(name.clone(), width, height));
+                                }
+                                app.editor.document_mut().active_layer_index = layers_count;
+                                app.editor.history.clear();
+                                app.texture_dirty = true;
+                            }
+                            
+                            let del_img = egui::Image::new(egui::include_image!("../../assets/icons/trash.svg")).tint(text_color).fit_to_exact_size(icon_size);
+                            if ui.add(egui::Button::image(del_img)).on_hover_text("Delete Layer").clicked() {
+                                if layers_count > 1 {
+                                    for frame in &mut app.editor.animation.frames {
+                                        if frame.document.layers.len() > active_idx {
+                                            frame.document.layers.remove(active_idx);
+                                            if frame.document.active_layer_index >= frame.document.layers.len() {
+                                                frame.document.active_layer_index = frame.document.layers.len().saturating_sub(1);
+                                            }
+                                        }
+                                    }
+                                    app.editor.history.clear();
+                                    app.texture_dirty = true;
+                                }
+                            }
+                        });
                     });
 
                     ui.separator();
@@ -290,7 +324,8 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     }
 
     if new_active_layer != app.editor.document().active_layer_index {
-        app.editor.document_mut().active_layer_index = new_active_layer;
+        let max_layer = app.editor.document().layers.len().saturating_sub(1);
+        app.editor.document_mut().active_layer_index = new_active_layer.min(max_layer);
     }
 
     for (idx, visible) in &layer_visibility_changes {
