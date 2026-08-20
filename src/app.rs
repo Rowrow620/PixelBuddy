@@ -1773,7 +1773,7 @@ impl eframe::App for PixelBuddyApp {
                 .collapsible(false)
                 .show(ctx, |ui| {
                     ui.heading("PixelBuddy");
-                    ui.label("A lightweight, cross-platform pixel art editor built in Rust.");
+                    ui.label("A pixel art editor built using Rust.");
                     ui.add_space(8.0);
                     ui.hyperlink_to("View on GitHub", "https://github.com/rowrow620/PixelBuddy");
                     ui.add_space(8.0);
