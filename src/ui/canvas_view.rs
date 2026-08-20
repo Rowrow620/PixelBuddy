@@ -9,9 +9,36 @@ const MAX_CANVAS_ZOOM: f32 = 64.0;
 
 pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     egui::CentralPanel::default().show(ctx, |ui| {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        let mut available_rect = ui.available_rect_before_wrap();
+        let ruler_size = 20.0;
+        
+        let mut top_ruler_rect = None;
+        let mut left_ruler_rect = None;
+        let mut top_ruler_resp = None;
+        let mut left_ruler_resp = None;
+        
+        if app.show_rulers {
+            top_ruler_rect = Some(Rect::from_min_size(
+                Pos2::new(available_rect.min.x + ruler_size, available_rect.min.y),
+                Vec2::new(available_rect.width() - ruler_size, ruler_size)
+            ));
+            left_ruler_rect = Some(Rect::from_min_size(
+                Pos2::new(available_rect.min.x, available_rect.min.y + ruler_size),
+                Vec2::new(ruler_size, available_rect.height() - ruler_size)
+            ));
+            
+            top_ruler_resp = Some(ui.interact(top_ruler_rect.unwrap(), ui.id().with("top_ruler"), Sense::click_and_drag()));
+            left_ruler_resp = Some(ui.interact(left_ruler_rect.unwrap(), ui.id().with("left_ruler"), Sense::click_and_drag()));
+            
+            available_rect.min.x += ruler_size;
+            available_rect.min.y += ruler_size;
+        }
+        
+        let rect = available_rect;
+        let response = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
+        ui.allocate_rect(ui.available_rect_before_wrap(), Sense::hover());
 
-        let painter = ui.painter_at(rect);
+        let painter = ui.painter().with_clip_rect(rect);
         let canvas_width = app.editor.document().width;
         let canvas_height = app.editor.document().height;
 
@@ -320,6 +347,172 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     end,
                     ctx.input(|i| i.modifiers.shift),
                 );
+            }
+        }
+        if app.show_guides {
+            let guide_stroke = Stroke::new(1.0, Color32::from_rgb(0, 255, 255));
+            let mut guide_to_remove = None;
+            
+            // Check if we are currently dragging a guide
+            if let Some((is_horizontal, idx)) = app.dragging_guide {
+                if let Some(pos) = ctx.pointer_interact_pos() {
+                    if is_horizontal {
+                        let y = ((pos.y - canvas_origin.y) / app.zoom).round() as i32;
+                        app.horizontal_guides[idx] = y;
+                        if !rect.contains(pos) && pos.y < rect.top() {
+                            guide_to_remove = Some((true, idx));
+                        }
+                    } else {
+                        let x = ((pos.x - canvas_origin.x) / app.zoom).round() as i32;
+                        app.vertical_guides[idx] = x;
+                        if !rect.contains(pos) && pos.x < rect.left() {
+                            guide_to_remove = Some((false, idx));
+                        }
+                    }
+                }
+                
+                if ctx.input(|i| i.pointer.any_released()) {
+                    if let Some((is_horiz, r_idx)) = guide_to_remove {
+                        if is_horiz {
+                            app.horizontal_guides.remove(r_idx);
+                        } else {
+                            app.vertical_guides.remove(r_idx);
+                        }
+                    }
+                    app.dragging_guide = None;
+                }
+            } else if response.drag_started() {
+                // Check if user clicked on an existing guide
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let click_y = ((pos.y - canvas_origin.y) / app.zoom).round() as i32;
+                    let click_x = ((pos.x - canvas_origin.x) / app.zoom).round() as i32;
+                    
+                    let mut found = false;
+                    for (i, &g_y) in app.horizontal_guides.iter().enumerate() {
+                        if (g_y - click_y).abs() <= 1 {
+                            app.dragging_guide = Some((true, i));
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        for (i, &g_x) in app.vertical_guides.iter().enumerate() {
+                            if (g_x - click_x).abs() <= 1 {
+                                app.dragging_guide = Some((false, i));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            for &g_y in &app.horizontal_guides {
+                let y = canvas_origin.y + (g_y as f32) * app.zoom;
+                painter.line_segment(
+                    [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
+                    guide_stroke
+                );
+            }
+            for &g_x in &app.vertical_guides {
+                let x = canvas_origin.x + (g_x as f32) * app.zoom;
+                painter.line_segment(
+                    [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+                    guide_stroke
+                );
+            }
+        }
+
+        if app.show_rulers {
+            if let Some(top_rect) = top_ruler_rect {
+                let r_painter = ui.painter().with_clip_rect(top_rect);
+                r_painter.rect_filled(top_rect, 0.0, Color32::from_rgb(30, 30, 40));
+                
+                let start_col = ((top_rect.left() - canvas_origin.x) / app.zoom).floor().max(0.0) as i32;
+                let end_col = ((top_rect.right() - canvas_origin.x) / app.zoom).ceil().max(0.0) as i32;
+                
+                for col in start_col..=end_col {
+                    let x = canvas_origin.x + (col as f32) * app.zoom;
+                    let is_major = col % 10 == 0;
+                    let tick_h = if is_major { top_rect.height() * 0.8 } else { top_rect.height() * 0.3 };
+                    r_painter.line_segment(
+                        [Pos2::new(x, top_rect.bottom() - tick_h), Pos2::new(x, top_rect.bottom())],
+                        Stroke::new(1.0, Color32::from_gray(100))
+                    );
+                    if is_major && app.zoom > 2.0 {
+                        r_painter.text(
+                            Pos2::new(x + 2.0, top_rect.top() + 2.0),
+                            egui::Align2::LEFT_TOP,
+                            col.to_string(),
+                            egui::FontId::proportional(10.0),
+                            Color32::from_gray(150),
+                        );
+                    }
+                }
+                
+                if let Some(resp) = &top_ruler_resp {
+                    if resp.drag_started() {
+                        if let Some(pos) = resp.interact_pointer_pos() {
+                            let y = ((pos.y - canvas_origin.y) / app.zoom).round() as i32;
+                            app.horizontal_guides.push(y);
+                            app.dragging_guide = Some((true, app.horizontal_guides.len() - 1));
+                            // force show guides
+                            app.show_guides = true;
+                        }
+                    }
+                }
+                
+                if let Some(pos) = ctx.pointer_latest_pos() {
+                    r_painter.line_segment(
+                        [Pos2::new(pos.x, top_rect.top()), Pos2::new(pos.x, top_rect.bottom())],
+                        Stroke::new(1.0, Color32::from_rgb(255, 100, 100))
+                    );
+                }
+            }
+            
+            if let Some(left_rect) = left_ruler_rect {
+                let r_painter = ui.painter().with_clip_rect(left_rect);
+                r_painter.rect_filled(left_rect, 0.0, Color32::from_rgb(30, 30, 40));
+                
+                let start_row = ((left_rect.top() - canvas_origin.y) / app.zoom).floor().max(0.0) as i32;
+                let end_row = ((left_rect.bottom() - canvas_origin.y) / app.zoom).ceil().max(0.0) as i32;
+                
+                for row in start_row..=end_row {
+                    let y = canvas_origin.y + (row as f32) * app.zoom;
+                    let is_major = row % 10 == 0;
+                    let tick_w = if is_major { left_rect.width() * 0.8 } else { left_rect.width() * 0.3 };
+                    r_painter.line_segment(
+                        [Pos2::new(left_rect.right() - tick_w, y), Pos2::new(left_rect.right(), y)],
+                        Stroke::new(1.0, Color32::from_gray(100))
+                    );
+                    if is_major && app.zoom > 2.0 {
+                        r_painter.text(
+                            Pos2::new(left_rect.left() + 2.0, y + 2.0),
+                            egui::Align2::LEFT_TOP,
+                            row.to_string(),
+                            egui::FontId::proportional(10.0),
+                            Color32::from_gray(150),
+                        );
+                    }
+                }
+                
+                if let Some(resp) = &left_ruler_resp {
+                    if resp.drag_started() {
+                        if let Some(pos) = resp.interact_pointer_pos() {
+                            let x = ((pos.x - canvas_origin.x) / app.zoom).round() as i32;
+                            app.vertical_guides.push(x);
+                            app.dragging_guide = Some((false, app.vertical_guides.len() - 1));
+                            // force show guides
+                            app.show_guides = true;
+                        }
+                    }
+                }
+                
+                if let Some(pos) = ctx.pointer_latest_pos() {
+                    r_painter.line_segment(
+                        [Pos2::new(left_rect.left(), pos.y), Pos2::new(left_rect.right(), pos.y)],
+                        Stroke::new(1.0, Color32::from_rgb(255, 100, 100))
+                    );
+                }
             }
         }
     });
