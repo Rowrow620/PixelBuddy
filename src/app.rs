@@ -207,6 +207,11 @@ pub struct PixelBuddyApp {
     pub spritesheet_import_columns: String,
     pub spritesheet_import_rows: String,
     pub spritesheet_import_error: Option<String>,
+    pub show_rulers: bool,
+    pub show_guides: bool,
+    pub horizontal_guides: Vec<i32>,
+    pub vertical_guides: Vec<i32>,
+    pub dragging_guide: Option<(bool, usize)>,
 }
 
 impl PixelBuddyApp {
@@ -254,6 +259,11 @@ impl PixelBuddyApp {
             spritesheet_import_columns: "1".to_string(),
             spritesheet_import_rows: "1".to_string(),
             spritesheet_import_error: None,
+            show_rulers: false,
+            show_guides: true,
+            horizontal_guides: Vec::new(),
+            vertical_guides: Vec::new(),
+            dragging_guide: None,
         }
     }
 

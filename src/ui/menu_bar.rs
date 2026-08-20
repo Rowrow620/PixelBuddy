@@ -151,6 +151,12 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     if ui.checkbox(&mut app.show_grid, "Toggle Grid").clicked() {
                         ui.close_menu();
                     }
+                    if ui.checkbox(&mut app.show_rulers, "Toggle Rulers").clicked() {
+                        ui.close_menu();
+                    }
+                    if ui.checkbox(&mut app.show_guides, "Toggle Guides").clicked() {
+                        ui.close_menu();
+                    }
                     if ui
                         .checkbox(&mut app.show_timeline, "Animation Timeline")
                         .clicked()
