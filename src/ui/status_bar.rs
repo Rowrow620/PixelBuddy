@@ -85,35 +85,37 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     );
                 }
 
-                // Push zoom controls to the right by allocating the remaining space
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if egui::Button::new("➕")
-                        .frame(false)
-                        .ui(ui)
-                        .on_hover_text("Zoom In (+)")
-                        .clicked()
-                    {
-                        app.zoom = (app.zoom * 1.18).clamp(0.5, 64.0);
-                    }
-                    ui.label(
-                        RichText::new(format!("{:.0}x", app.zoom.max(1.0)))
-                            .color(Color32::from_white_alpha(180))
-                            .size(12.0),
-                    );
-                    if egui::Button::new("➖")
-                        .frame(false)
-                        .ui(ui)
-                        .on_hover_text("Zoom Out (-)")
-                        .clicked()
-                    {
-                        app.zoom = (app.zoom / 1.18).clamp(0.5, 64.0);
-                    }
-                    ui.label(
-                        RichText::new("Zoom:")
-                            .color(Color32::from_white_alpha(180))
-                            .size(12.0),
-                    );
-                });
+                ui.label(RichText::new("|").color(Color32::from_white_alpha(100)));
+                
+                ui.label(
+                    RichText::new("Zoom:")
+                        .color(Color32::from_white_alpha(180))
+                        .size(12.0),
+                );
+                
+                if egui::Button::new("➖")
+                    .frame(false)
+                    .ui(ui)
+                    .on_hover_text("Zoom Out (-)")
+                    .clicked()
+                {
+                    app.zoom = (app.zoom / 1.18).clamp(0.5, 64.0);
+                }
+                
+                ui.label(
+                    RichText::new(format!("{:.0}x", app.zoom.max(1.0)))
+                        .color(Color32::from_white_alpha(180))
+                        .size(12.0),
+                );
+                
+                if egui::Button::new("➕")
+                    .frame(false)
+                    .ui(ui)
+                    .on_hover_text("Zoom In (+)")
+                    .clicked()
+                {
+                    app.zoom = (app.zoom * 1.18).clamp(0.5, 64.0);
+                }
             });
         });
 }

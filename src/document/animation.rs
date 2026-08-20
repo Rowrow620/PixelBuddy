@@ -26,7 +26,9 @@ impl AnimationFrame {
     }
 }
 
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FrameTag {
     pub name: String,
     pub color: [f32; 3],
