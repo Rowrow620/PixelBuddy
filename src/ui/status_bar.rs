@@ -8,23 +8,13 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
         .show(ctx, |ui| {
             // Draw top separator manually for precise color control
             let rect = ui.max_rect();
-use crate::app::PixelBuddyApp;
-use egui::{Color32, RichText, Widget};
-
-pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
-    egui::TopBottomPanel::bottom("status_bar")
-        .frame(egui::Frame::NONE.fill(ui_bg_color(ctx)).inner_margin(4.0))
-        .show_separator_line(false)
-        .show(ctx, |ui| {
-            // Draw top separator manually for precise color control
-            let rect = ui.max_rect();
             ui.painter().hline(
                 rect.min.x..=rect.max.x,
                 rect.min.y,
                 egui::Stroke::new(1.0_f32, crate::ui::theme::SEPARATOR_COLOR),
             );
 
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let (cx, cy) = if let Some(pos) = app.last_canvas_pixel {
                     (pos.0, pos.1)
                 } else {
