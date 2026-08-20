@@ -242,7 +242,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
 
                     // Handle drag release — apply the tool action
                     if response.drag_stopped_by(egui::PointerButton::Primary) && app.is_drawing {
-                        finish_canvas_action(app, cx, cy);
+                        finish_canvas_action(app, cx, cy, ctx.input(|i| i.modifiers.shift));
                     }
 
                     if response.clicked_by(egui::PointerButton::Secondary) {
@@ -292,7 +292,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             } else if primary_released {
                 let endpoint = drag_endpoint(pointer_pixel, app.last_canvas_pixel, app.shape_start);
                 if let Some((x, y)) = endpoint {
-                    finish_canvas_action(app, x, y);
+                    finish_canvas_action(app, x, y, ctx.input(|i| i.modifiers.shift));
                 } else {
                     app.cancel_canvas_action();
                 }
@@ -311,7 +311,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
 
         if app.is_drawing {
             if let (Some(start), Some(end)) = (app.shape_start, app.last_canvas_pixel) {
-                draw_canvas_preview(&painter, app, canvas_origin, canvas_rect, start, end);
+                draw_canvas_preview(&painter, app, canvas_origin, canvas_rect, start, end, ctx.input(|i| i.modifiers.shift));
             }
         }
     });
@@ -376,6 +376,33 @@ fn drag_endpoint(
     current.or(last_canvas_pixel).or(start)
 }
 
+fn constrain_end_point(start_x: i32, start_y: i32, end_x: i32, end_y: i32, tool: ToolType, shift: bool) -> (i32, i32) {
+    if !shift {
+        return (end_x, end_y);
+    }
+    match tool {
+        ToolType::Rectangle | ToolType::Ellipse | ToolType::Marquee => {
+            let dx = end_x - start_x;
+            let dy = end_y - start_y;
+            let size = dx.abs().max(dy.abs());
+            (start_x + size * dx.signum(), start_y + size * dy.signum())
+        }
+        ToolType::Line => {
+            let dx = end_x - start_x;
+            let dy = end_y - start_y;
+            if dx.abs() > dy.abs() * 2 {
+                (end_x, start_y) // Horizontal
+            } else if dy.abs() > dx.abs() * 2 {
+                (start_x, end_y) // Vertical
+            } else {
+                let size = dx.abs().max(dy.abs());
+                (start_x + size * dx.signum(), start_y + size * dy.signum()) // 45 deg
+            }
+        }
+        _ => (end_x, end_y),
+    }
+}
+
 fn update_canvas_action(app: &mut PixelBuddyApp, x: i32, y: i32) {
     app.last_canvas_pixel = Some((x, y));
     match app.editor.active_tool {
@@ -394,13 +421,15 @@ fn update_canvas_action(app: &mut PixelBuddyApp, x: i32, y: i32) {
     }
 }
 
-fn finish_canvas_action(app: &mut PixelBuddyApp, end_x: i32, end_y: i32) {
+fn finish_canvas_action(app: &mut PixelBuddyApp, end_x: i32, end_y: i32, shift: bool) {
     let Some((start_x, start_y)) = app.shape_start else {
         app.cancel_canvas_action();
         return;
     };
 
     let tool = app.editor.active_tool;
+    let (end_x, end_y) = constrain_end_point(start_x, start_y, end_x, end_y, tool, shift);
+
     if matches!(tool, ToolType::Pencil | ToolType::Eraser) {
         let end_point = (end_x as u32, end_y as u32);
         if app.stroke_points.last().copied() != Some(end_point) {
@@ -412,7 +441,7 @@ fn finish_canvas_action(app: &mut PixelBuddyApp, end_x: i32, end_y: i32) {
     }
 
     let color = app.editor.primary_color;
-    let changes = match tool {
+    let mut changes = match tool {
         ToolType::Pencil => tools::pencil::draw_stroke(&app.stroke_points, color),
         ToolType::Eraser => tools::eraser::erase_stroke(&app.stroke_points),
         ToolType::Line => tools::line::draw_line(start_x, start_y, end_x, end_y, color),
@@ -441,6 +470,22 @@ fn finish_canvas_action(app: &mut PixelBuddyApp, end_x: i32, end_y: i32) {
         ),
         _ => Vec::new(),
     };
+
+    if matches!(tool, ToolType::Pencil | ToolType::Eraser | ToolType::Line | ToolType::Rectangle | ToolType::Ellipse) {
+        let size = app.editor.brush_size as u32;
+        if size > 1 {
+            let mut expanded = Vec::new();
+            for (x, y, color) in changes {
+                for dy in 0..size {
+                    for dx in 0..size {
+                        expanded.push((x.saturating_add(dx), y.saturating_add(dy), color));
+                    }
+                }
+            }
+            changes = expanded;
+        }
+    }
+
     app.apply_tool_changes(changes);
     app.cancel_canvas_action();
 }
@@ -500,7 +545,10 @@ fn draw_canvas_preview(
     canvas_rect: Rect,
     start: (i32, i32),
     end: (i32, i32),
+    shift: bool,
 ) {
+    let (end_x, end_y) = constrain_end_point(start.0, start.1, end.0, end.1, app.editor.active_tool, shift);
+    let end = (end_x, end_y);
     let primary = app.editor.primary_color;
     let preview_color = Color32::from_rgba_unmultiplied(
         primary[0],
@@ -519,6 +567,8 @@ fn draw_canvas_preview(
                 preview_color
             };
             let stroke = Stroke::new((app.zoom * 0.8).max(1.0), color);
+            let size = app.editor.brush_size as i32;
+            
             if app.stroke_points.len() == 1 {
                 let (x, y) = app.stroke_points[0];
                 painter.rect_filled(
@@ -527,8 +577,8 @@ fn draw_canvas_preview(
                         app.zoom,
                         x as i32,
                         y as i32,
-                        x as i32,
-                        y as i32,
+                        (x as i32) + size - 1,
+                        (y as i32) + size - 1,
                     ),
                     0.0,
                     color,
@@ -537,12 +587,18 @@ fn draw_canvas_preview(
             for points in app.stroke_points.windows(2) {
                 let (x0, y0) = points[0];
                 let (x1, y1) = points[1];
+                let (cx0, cy0) = (x0 as i32, y0 as i32);
+                let (cx1, cy1) = (x1 as i32, y1 as i32);
+                
+                // For thickness > 1 in preview, just draw a filled polygon or multiple lines.
+                // An approximation for preview is to just draw lines with a thicker stroke.
+                let thick_stroke = Stroke::new(stroke.width.max(size as f32 * app.zoom), color);
                 painter.line_segment(
                     [
-                        pixel_center(canvas_origin, app.zoom, x0 as i32, y0 as i32),
-                        pixel_center(canvas_origin, app.zoom, x1 as i32, y1 as i32),
+                        pixel_center(canvas_origin, app.zoom, cx0 + size / 2, cy0 + size / 2),
+                        pixel_center(canvas_origin, app.zoom, cx1 + size / 2, cy1 + size / 2),
                     ],
-                    stroke,
+                    thick_stroke,
                 );
             }
         }
