@@ -8,6 +8,7 @@ pub mod gif;
 pub mod png;
 pub mod project;
 pub mod spritesheet;
+pub mod webp;
 
 use std::fmt;
 
@@ -36,6 +37,7 @@ pub enum ExportFormat {
     Png,
     Gif,
     SpriteSheetPng,
+    WebP,
 }
 
 impl ExportFormat {
@@ -45,6 +47,7 @@ impl ExportFormat {
             Self::Png => "PNG image",
             Self::Gif => "animated GIF",
             Self::SpriteSheetPng => "PNG sprite sheet",
+            Self::WebP => "WebP image",
         }
     }
 
@@ -54,6 +57,7 @@ impl ExportFormat {
             Self::Png => "PNG Image",
             Self::Gif => "GIF Animation",
             Self::SpriteSheetPng => "PNG Sprite Sheet",
+            Self::WebP => "WebP Image",
         }
     }
 
@@ -62,6 +66,7 @@ impl ExportFormat {
             Self::Project => &[project::PROJECT_FILE_EXTENSION],
             Self::Png | Self::SpriteSheetPng => &["png"],
             Self::Gif => &["gif"],
+            Self::WebP => &["webp"],
         }
     }
 
@@ -71,6 +76,7 @@ impl ExportFormat {
             Self::Png => "pixelbuddy-export.png",
             Self::Gif => "pixelbuddy-animation.gif",
             Self::SpriteSheetPng => "pixelbuddy-sprite-sheet.png",
+            Self::WebP => "pixelbuddy-export.webp",
         }
     }
 }
@@ -116,6 +122,10 @@ impl ExportRequest {
 
     pub fn sprite_sheet_png(bytes: Vec<u8>) -> Self {
         Self::new(ExportFormat::SpriteSheetPng, bytes)
+    }
+
+    pub fn webp(bytes: Vec<u8>) -> Self {
+        Self::new(ExportFormat::WebP, bytes)
     }
 
     /// Overrides the default filename shown by the native/browser save dialog.
@@ -454,7 +464,7 @@ impl IoHandler {
 pub fn trigger_open_file(sender: Sender<FileAction>) {
     let task = async move {
         if let Some(file) = AsyncFileDialog::new()
-            .add_filter("PNG Image", &["png"])
+            .add_filter("Images", &["png", "webp"])
             .pick_file()
             .await
         {

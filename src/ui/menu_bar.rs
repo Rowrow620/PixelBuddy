@@ -24,12 +24,16 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Import PNG").clicked() {
+                    if ui.button("Import Image (PNG/WebP)").clicked() {
                         io::trigger_open_file(app.io_handler.sender.clone());
                         ui.close_menu();
                     }
                     if ui.button("Export PNG...").clicked() {
                         app.open_png_export_dialog();
+                        ui.close_menu();
+                    }
+                    if ui.button("Export WebP...").clicked() {
+                        app.open_webp_export_dialog();
                         ui.close_menu();
                     }
                     if ui.button("Export Animated GIF...").clicked() {
