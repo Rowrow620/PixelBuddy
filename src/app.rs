@@ -565,13 +565,25 @@ impl PixelBuddyApp {
             
             let current_index = self.editor.animation.current_frame_index;
             if let Some(thumb) = &mut self.frame_thumbnails[current_index] {
-                thumb.set(image, options);
+                thumb.set(image.clone(), options);
             } else {
                 self.frame_thumbnails[current_index] = Some(ctx.load_texture(
                     format!("pixelbuddy_thumb_{}", current_index),
-                    image,
+                    image.clone(),
                     options,
                 ));
+            }
+
+            for i in 0..self.frame_thumbnails.len() {
+                if self.frame_thumbnails[i].is_none() {
+                    let frame_canvas = self.editor.animation.frames[i].document.composite_preview();
+                    let frame_image = ColorImage::from_rgba_unmultiplied(size, frame_canvas.pixels());
+                    self.frame_thumbnails[i] = Some(ctx.load_texture(
+                        format!("pixelbuddy_thumb_{}", i),
+                        frame_image,
+                        options,
+                    ));
+                }
             }
 
             self.texture_dirty = false;
@@ -1849,10 +1861,10 @@ impl eframe::App for PixelBuddyApp {
         crate::ui::menu_bar::show(ctx, self);
         crate::ui::toolbar::show(ctx, self);
         crate::ui::layers_panel::show(ctx, self);
+        crate::ui::status_bar::show(ctx, self);
         if self.show_timeline {
             crate::ui::timeline_panel::show(ctx, self);
         }
-        crate::ui::status_bar::show(ctx, self);
         crate::ui::canvas_view::show(ctx, self);
 
         Self::custom_window_borders(ctx);
