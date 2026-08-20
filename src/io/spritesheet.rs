@@ -141,6 +141,83 @@ pub fn export_spritesheet_png_at_dimensions(
     Ok(cursor.into_inner())
 }
 
+/// Imports a sprite sheet grid and slices it into animation frames.
+pub fn import_spritesheet(
+    data: &[u8],
+    file_name: &str,
+    columns: u32,
+    rows: u32,
+) -> Result<AnimationManager, IoError> {
+    use image::ImageReader;
+    
+    let format = if file_name.to_lowercase().ends_with(".webp") {
+        ImageFormat::WebP
+    } else {
+        ImageFormat::Png
+    };
+    
+    let (width, height) = ImageReader::with_format(Cursor::new(data), format)
+        .into_dimensions()
+        .map_err(|error| IoError::Decode {
+            format: "sprite sheet",
+            message: error.to_string(),
+        })?;
+    
+    if columns == 0 || rows == 0 {
+        return Err(IoError::Decode {
+            format: "sprite sheet",
+            message: "Columns and rows must be greater than zero.".to_string(),
+        });
+    }
+    
+    if width % columns != 0 || height % rows != 0 {
+        return Err(IoError::Decode {
+            format: "sprite sheet",
+            message: format!("Image dimensions {}x{} cannot be evenly divided by {} columns and {} rows.", width, height, columns, rows),
+        });
+    }
+    
+    let frame_width = width / columns;
+    let frame_height = height / rows;
+    validate_canvas_dimensions(frame_width, frame_height)?;
+    
+    let image = image::load_from_memory_with_format(data, format)
+        .map_err(|error| IoError::Decode {
+            format: "sprite sheet",
+            message: error.to_string(),
+        })?;
+    let rgba = image.into_rgba8();
+    let src_pixels = rgba.as_raw();
+    
+    let mut animation: Option<AnimationManager> = None;
+    for r in 0..rows {
+        for c in 0..columns {
+            let mut document = crate::document::Document::new(frame_width, frame_height);
+            let layer = document.active_layer_mut();
+            let pixels = layer.canvas.pixels_mut();
+            
+            for y in 0..frame_height {
+                let src_y = r * frame_height + y;
+                let src_start = (src_y * width + c * frame_width) as usize * 4;
+                let src_end = src_start + (frame_width as usize) * 4;
+                
+                let dst_start = (y * frame_width) as usize * 4;
+                let dst_end = dst_start + (frame_width as usize) * 4;
+                
+                pixels[dst_start..dst_end].copy_from_slice(&src_pixels[src_start..src_end]);
+            }
+            
+            if let Some(ref mut anim) = animation {
+                anim.frames.push(crate::document::AnimationFrame::new(document));
+            } else {
+                animation = Some(AnimationManager::new(document));
+            }
+        }
+    }
+    
+    animation.ok_or(IoError::EmptyAnimation)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
