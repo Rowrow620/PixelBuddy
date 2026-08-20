@@ -118,42 +118,66 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             .ceil()
             .clamp(0.0, canvas_h) as u32;
 
-        // A single repeating texture replaces the old per-pixel checkerboard
-        // draw loop. The UV span is expressed in two-pixel tiles, so each
-        // checker cell remains exactly one canvas pixel at every zoom level.
-        let checkerboard_uv =
-            Rect::from_min_max(Pos2::ZERO, Pos2::new(canvas_w / 2.0, canvas_h / 2.0));
-        painter.image(
-            app.checkerboard_texture_id(ctx),
-            canvas_rect,
-            checkerboard_uv,
-            Color32::WHITE,
-        );
+        let checkerboard_tex = app.checkerboard_texture_id(ctx);
+        let onion_tex = app.onion_texture_ids(ctx);
+        let canvas_tex = app.canvas_texture.as_ref().map(|t| t.id());
+        
+        let offsets = match app.tile_mode {
+            crate::app::TileMode::None => vec![(0, 0)],
+            crate::app::TileMode::Both => vec![
+                (-1, -1), (0, -1), (1, -1),
+                (-1,  0), (0,  0), (1,  0),
+                (-1,  1), (0,  1), (1,  1),
+            ],
+            crate::app::TileMode::XAxis => vec![(-1, 0), (0, 0), (1, 0)],
+            crate::app::TileMode::YAxis => vec![(0, -1), (0, 0), (0, 1)],
+        };
 
-        // Onion skins are composited/uploaded only when their neighboring
-        // frame pair changes rather than once per paint.
-        if let Some((previous_texture, next_texture)) = app.onion_texture_ids(ctx) {
-            let onion_alpha =
-                (app.editor.animation.onion_skin_opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
-            let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
+        for (ox, oy) in offsets {
+            let offset_x = (ox as f32) * display_w;
+            let offset_y = (oy as f32) * display_h;
+            let current_rect = canvas_rect.translate(Vec2::new(offset_x, offset_y));
+            
+            let checkerboard_uv =
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(canvas_w / 2.0, canvas_h / 2.0));
             painter.image(
-                previous_texture,
-                canvas_rect,
-                uv,
-                Color32::from_rgba_unmultiplied(255, 120, 120, onion_alpha),
+                checkerboard_tex,
+                current_rect,
+                checkerboard_uv,
+                Color32::WHITE,
             );
-            painter.image(
-                next_texture,
-                canvas_rect,
-                uv,
-                Color32::from_rgba_unmultiplied(120, 180, 255, onion_alpha),
-            );
-        }
 
-        // Draw composited canvas image
-        if let Some(texture) = &app.canvas_texture {
-            let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
-            painter.image(texture.id(), canvas_rect, uv, Color32::WHITE);
+            if let Some((previous_texture, next_texture)) = onion_tex {
+                let onion_alpha =
+                    (app.editor.animation.onion_skin_opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+                let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
+                painter.image(
+                    previous_texture,
+                    current_rect,
+                    uv,
+                    Color32::from_rgba_unmultiplied(255, 120, 120, onion_alpha),
+                );
+                painter.image(
+                    next_texture,
+                    current_rect,
+                    uv,
+                    Color32::from_rgba_unmultiplied(120, 180, 255, onion_alpha),
+                );
+            }
+
+            if let Some(texture_id) = canvas_tex {
+                let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
+                painter.image(texture_id, current_rect, uv, Color32::WHITE);
+            }
+            
+            if (ox, oy) != (0, 0) && app.tile_mode != crate::app::TileMode::None {
+                painter.rect_stroke(
+                    current_rect,
+                    0.0,
+                    Stroke::new(1.0_f32, Color32::from_rgb(180, 0, 255).linear_multiply(0.5)),
+                    egui::StrokeKind::Middle,
+                );
+            }
         }
 
         // Draw pixel grid when zoomed in enough
@@ -194,6 +218,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     app.zoom,
                     canvas_width,
                     canvas_height,
+                    app.tile_mode,
                 )
             });
         if let Some(pixel) = pointer_pixel {
@@ -423,6 +448,15 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
         }
 
         if app.show_rulers {
+            let steps = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+            let mut step = 1;
+            for &s in &steps {
+                if (s as f32) * app.zoom >= 5.0 {
+                    step = s;
+                    break;
+                }
+            }
+            
             if let Some(top_rect) = top_ruler_rect {
                 let r_painter = ui.painter().with_clip_rect(top_rect);
                 r_painter.rect_filled(top_rect, 0.0, Color32::from_rgb(30, 30, 40));
@@ -431,14 +465,15 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 let end_col = ((top_rect.right() - canvas_origin.x) / app.zoom).ceil().max(0.0) as i32;
                 
                 for col in start_col..=end_col {
+                    if col % step != 0 { continue; }
                     let x = canvas_origin.x + (col as f32) * app.zoom;
-                    let is_major = col % 10 == 0;
+                    let is_major = col % (step * 5).max(10) == 0;
                     let tick_h = if is_major { top_rect.height() * 0.8 } else { top_rect.height() * 0.3 };
                     r_painter.line_segment(
                         [Pos2::new(x, top_rect.bottom() - tick_h), Pos2::new(x, top_rect.bottom())],
                         Stroke::new(1.0, Color32::from_gray(100))
                     );
-                    if is_major && app.zoom > 2.0 {
+                    if is_major {
                         r_painter.text(
                             Pos2::new(x + 2.0, top_rect.top() + 2.0),
                             egui::Align2::LEFT_TOP,
@@ -477,14 +512,15 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 let end_row = ((left_rect.bottom() - canvas_origin.y) / app.zoom).ceil().max(0.0) as i32;
                 
                 for row in start_row..=end_row {
+                    if row % step != 0 { continue; }
                     let y = canvas_origin.y + (row as f32) * app.zoom;
-                    let is_major = row % 10 == 0;
+                    let is_major = row % (step * 5).max(10) == 0;
                     let tick_w = if is_major { left_rect.width() * 0.8 } else { left_rect.width() * 0.3 };
                     r_painter.line_segment(
                         [Pos2::new(left_rect.right() - tick_w, y), Pos2::new(left_rect.right(), y)],
                         Stroke::new(1.0, Color32::from_gray(100))
                     );
-                    if is_major && app.zoom > 2.0 {
+                    if is_major {
                         r_painter.text(
                             Pos2::new(left_rect.left() + 2.0, y + 2.0),
                             egui::Align2::LEFT_TOP,
@@ -549,16 +585,33 @@ fn canvas_pixel_at(
     zoom: f32,
     canvas_width: u32,
     canvas_height: u32,
+    tile_mode: crate::app::TileMode,
 ) -> Option<(i32, i32)> {
     if !zoom.is_finite() || zoom <= 0.0 || canvas_width == 0 || canvas_height == 0 {
         return None;
     }
 
-    let x = ((position.x - canvas_origin.x) / zoom).floor();
-    let y = ((position.y - canvas_origin.y) / zoom).floor();
-    if !x.is_finite()
-        || !y.is_finite()
-        || x < 0.0
+    let mut x = ((position.x - canvas_origin.x) / zoom).floor();
+    let mut y = ((position.y - canvas_origin.y) / zoom).floor();
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
+
+    match tile_mode {
+        crate::app::TileMode::Both => {
+            x = x.rem_euclid(canvas_width as f32);
+            y = y.rem_euclid(canvas_height as f32);
+        }
+        crate::app::TileMode::XAxis => {
+            x = x.rem_euclid(canvas_width as f32);
+        }
+        crate::app::TileMode::YAxis => {
+            y = y.rem_euclid(canvas_height as f32);
+        }
+        crate::app::TileMode::None => {}
+    }
+
+    if x < 0.0
         || y < 0.0
         || x >= canvas_width as f32
         || y >= canvas_height as f32
@@ -922,18 +975,18 @@ mod tests {
     use egui::Pos2;
 
     #[test]
-    fn canvas_pixel_mapping_rejects_positions_outside_the_canvas() {
+    fn canvas_pixel_at_resolves_valid_coordinate() {
         let origin = Pos2::new(10.0, 20.0);
         assert_eq!(
-            canvas_pixel_at(Pos2::new(14.1, 24.1), origin, 4.0, 3, 2),
+            canvas_pixel_at(Pos2::new(14.1, 24.1), origin, 4.0, 3, 2, crate::app::TileMode::None),
             Some((1, 1))
         );
         assert_eq!(
-            canvas_pixel_at(Pos2::new(22.0, 20.0), origin, 4.0, 3, 2),
+            canvas_pixel_at(Pos2::new(22.0, 20.0), origin, 4.0, 3, 2, crate::app::TileMode::None),
             None
         );
         assert_eq!(
-            canvas_pixel_at(Pos2::new(10.0, 20.0), origin, 0.0, 3, 2),
+            canvas_pixel_at(Pos2::new(10.0, 20.0), origin, 0.0, 3, 2, crate::app::TileMode::None),
             None
         );
     }
