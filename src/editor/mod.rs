@@ -513,7 +513,7 @@ mod tests {
 
         assert!(editor.undo());
         assert_eq!(editor.document().layers.len(), 1);
-        assert_eq!(editor.document().palette.colors.len(), 24);
+        assert_eq!(editor.document().palette.colors.len(), 16);
 
         assert!(editor.redo());
         assert_eq!(editor.document().layers.len(), 2);
