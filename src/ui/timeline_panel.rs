@@ -41,7 +41,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     egui::TopBottomPanel::bottom("timeline_panel")
         .show(ctx, |ui| {
             ui.vertical(|ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     // Playback Controls
                 ui.add_space(4.0);
                 let play_icon = if app.editor.animation.is_playing {
