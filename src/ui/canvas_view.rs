@@ -448,14 +448,15 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
         }
 
         if app.show_rulers {
-            let steps = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
-            let mut step = 1;
-            for &s in &steps {
-                if (s as f32) * app.zoom >= 5.0 {
-                    step = s;
+            let text_steps = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000];
+            let mut label_step = 1;
+            for &s in &text_steps {
+                if (s as f32) * app.zoom >= 35.0 {
+                    label_step = s;
                     break;
                 }
             }
+            let tick_step = (label_step / 5).max(1);
             
             if let Some(top_rect) = top_ruler_rect {
                 let r_painter = ui.painter().with_clip_rect(top_rect);
@@ -465,9 +466,9 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 let end_col = ((top_rect.right() - canvas_origin.x) / app.zoom).ceil().max(0.0) as i32;
                 
                 for col in start_col..=end_col {
-                    if col % step != 0 { continue; }
+                    if col % tick_step != 0 { continue; }
                     let x = canvas_origin.x + (col as f32) * app.zoom;
-                    let is_major = col % (step * 5).max(10) == 0;
+                    let is_major = col % label_step == 0;
                     let tick_h = if is_major { top_rect.height() * 0.8 } else { top_rect.height() * 0.3 };
                     r_painter.line_segment(
                         [Pos2::new(x, top_rect.bottom() - tick_h), Pos2::new(x, top_rect.bottom())],
@@ -512,9 +513,9 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 let end_row = ((left_rect.bottom() - canvas_origin.y) / app.zoom).ceil().max(0.0) as i32;
                 
                 for row in start_row..=end_row {
-                    if row % step != 0 { continue; }
+                    if row % tick_step != 0 { continue; }
                     let y = canvas_origin.y + (row as f32) * app.zoom;
-                    let is_major = row % (step * 5).max(10) == 0;
+                    let is_major = row % label_step == 0;
                     let tick_w = if is_major { left_rect.width() * 0.8 } else { left_rect.width() * 0.3 };
                     r_painter.line_segment(
                         [Pos2::new(left_rect.right() - tick_w, y), Pos2::new(left_rect.right(), y)],
