@@ -24,12 +24,21 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Import Image (PNG/WebP)").clicked() {
-                        io::trigger_open_file(app.io_handler.sender.clone());
+                    if ui.button("Open Image (PNG/WebP)...").clicked() {
+                        io::trigger_open_file(app.io_handler.sender.clone(), true);
                         ui.close_menu();
                     }
-                    if ui.button("Import Sprite Sheet...").clicked() {
-                        io::trigger_open_spritesheet(app.io_handler.sender.clone());
+                    if ui.button("Open Sprite Sheet...").clicked() {
+                        io::trigger_open_spritesheet(app.io_handler.sender.clone(), true);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Import Image to Current Frame...").clicked() {
+                        io::trigger_open_file(app.io_handler.sender.clone(), false);
+                        ui.close_menu();
+                    }
+                    if ui.button("Import Sprite Sheet as New Frames...").clicked() {
+                        io::trigger_open_spritesheet(app.io_handler.sender.clone(), false);
                         ui.close_menu();
                     }
                     if ui.button("Export PNG...").clicked() {

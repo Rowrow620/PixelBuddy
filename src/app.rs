@@ -203,6 +203,7 @@ pub struct PixelBuddyApp {
     show_close_confirmation: bool,
     allow_close: bool,
     pub show_spritesheet_import_dialog: bool,
+    pub spritesheet_import_as_new_project: bool,
     pub spritesheet_import_data: Option<(Vec<u8>, String)>,
     pub spritesheet_import_texture: Option<egui::TextureHandle>,
     pub spritesheet_import_columns: String,
@@ -266,6 +267,7 @@ impl PixelBuddyApp {
             show_close_confirmation: false,
             allow_close: false,
             show_spritesheet_import_dialog: false,
+            spritesheet_import_as_new_project: true,
             spritesheet_import_data: None,
             spritesheet_import_texture: None,
             spritesheet_import_columns: "1".to_string(),
@@ -1189,11 +1191,37 @@ impl PixelBuddyApp {
                     Ok(animation) => {
                         self.show_spritesheet_import_dialog = false;
                         self.spritesheet_import_error = None;
-                        self.show_timeline = true; // Automatically show timeline when an animation is imported
-                        self.request_replacement(PendingReplacement::ImportedAnimation {
-                            animation,
-                            file_name,
-                        });
+                        
+                        if self.spritesheet_import_as_new_project {
+                            self.show_timeline = true;
+                            self.request_replacement(PendingReplacement::ImportedAnimation {
+                                animation,
+                                file_name,
+                            });
+                        } else {
+                            let doc_width = self.editor.document().width;
+                            let doc_height = self.editor.document().height;
+                            
+                            // Check if dimensions match
+                            let first_frame = &animation.frames[0];
+                            if first_frame.document.width != doc_width || first_frame.document.height != doc_height {
+                                self.spritesheet_import_error = Some(format!(
+                                    "Spritesheet frames are {}x{}, but current document is {}x{}. Dimensions must match exactly to import as frames.",
+                                    first_frame.document.width, first_frame.document.height, doc_width, doc_height
+                                ));
+                                self.spritesheet_import_data = Some((data, file_name));
+                                self.show_spritesheet_import_dialog = true;
+                                return;
+                            }
+                            
+                            // Append frames
+                            for frame in animation.frames {
+                                self.editor.animation.frames.push(frame);
+                            }
+                            self.texture_dirty = true;
+                            self.editor.mark_dirty();
+                            self.status_message = Some(("Imported sprite sheet frames".to_string(), false));
+                        }
                     }
                     Err(e) => {
                         self.spritesheet_import_error = Some(e.to_string());
@@ -1643,7 +1671,7 @@ impl eframe::App for PixelBuddyApp {
         // Handle I/O events
         while let Ok(action) = self.io_handler.receiver.try_recv() {
             match action {
-                FileAction::OpenedImage { data, file_name } => {
+                FileAction::OpenedImage { data, file_name, as_new_project } => {
                     let result = if file_name.to_lowercase().ends_with(".webp") {
                         crate::io::webp::import_webp_to_document(&data)
                     } else {
@@ -1652,7 +1680,28 @@ impl eframe::App for PixelBuddyApp {
                     
                     match result {
                         Ok(doc) => {
-                            self.request_imported_image(doc, file_name);
+                            if as_new_project {
+                                self.request_imported_image(doc, file_name);
+                            } else {
+                                let doc_width = self.editor.document().width;
+                                let doc_height = self.editor.document().height;
+                                let mut imported_layer = doc.layers.into_iter().next().unwrap();
+                                imported_layer.name = file_name;
+                                
+                                let mut new_layer = crate::document::Layer::new(imported_layer.name.clone(), doc_width, doc_height);
+                                for y in 0..imported_layer.canvas.height() {
+                                    for x in 0..imported_layer.canvas.width() {
+                                        let p = imported_layer.canvas.get_pixel(x, y);
+                                        new_layer.canvas.set_pixel(x, y, p);
+                                    }
+                                }
+                                
+                                self.editor.document_mut().layers.push(new_layer);
+                                self.editor.document_mut().active_layer_index = self.editor.document().layers.len() - 1;
+                                self.editor.mark_dirty();
+                                self.texture_dirty = true;
+                                self.status_message = Some(("Imported image as new layer".to_string(), false));
+                            }
                         }
                         Err(error) => {
                             log::error!("Unable to open image: {error}");
@@ -1660,8 +1709,9 @@ impl eframe::App for PixelBuddyApp {
                         }
                     }
                 }
-                FileAction::OpenedSpriteSheet { data, file_name } => {
+                FileAction::OpenedSpriteSheet { data, file_name, as_new_project } => {
                     self.show_spritesheet_import_dialog = true;
+                    self.spritesheet_import_as_new_project = as_new_project;
                     self.spritesheet_import_columns = "1".to_string();
                     self.spritesheet_import_rows = "1".to_string();
                     self.spritesheet_import_error = None;
