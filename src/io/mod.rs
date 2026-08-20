@@ -429,6 +429,10 @@ pub enum FileAction {
         data: Vec<u8>,
         file_name: String,
     },
+    OpenedSpriteSheet {
+        data: Vec<u8>,
+        file_name: String,
+    },
     /// Raw UTF-8 project bytes selected by the user. The app decodes these
     /// only after confirming that replacing dirty work is intentional.
     OpenedProject {
@@ -471,6 +475,28 @@ pub fn trigger_open_file(sender: Sender<FileAction>) {
             let file_name = file.file_name();
             let data = file.read().await;
             let _ = sender.send(FileAction::OpenedImage { data, file_name });
+        }
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_futures::spawn_local(task);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    std::thread::spawn(move || {
+        pollster::block_on(task);
+    });
+}
+
+pub fn trigger_open_spritesheet(sender: Sender<FileAction>) {
+    let task = async move {
+        if let Some(file) = AsyncFileDialog::new()
+            .add_filter("Images", &["png", "webp"])
+            .pick_file()
+            .await
+        {
+            let file_name = file.file_name();
+            let data = file.read().await;
+            let _ = sender.send(FileAction::OpenedSpriteSheet { data, file_name });
         }
     };
 
