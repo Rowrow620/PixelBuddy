@@ -189,7 +189,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                     let is_active = i == current_frame;
                                     let label = format!("Frame {}", i + 1);
 
-                                    let mut frame_response = if let Some(Some(thumb)) = app.frame_thumbnails.get(i) {
+                                    let frame_response = if let Some(Some(thumb)) = app.frame_thumbnails.get(i) {
                                         let btn = egui::ImageButton::new(
                                             egui::Image::new(thumb)
                                                 .fit_to_exact_size(egui::vec2(32.0, 32.0))
