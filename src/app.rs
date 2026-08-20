@@ -652,15 +652,14 @@ impl PixelBuddyApp {
             let layer = &mut self.editor.document_mut().layers[active_layer_index];
             for ((x, y), new_color) in final_changes {
                 if layer.canvas.in_bounds(x as i32, y as i32) {
-                    if has_sel {
-                        if (x as i32) < sel_min_x
+                    if has_sel
+                        && ((x as i32) < sel_min_x
                             || (x as i32) > sel_max_x
                             || (y as i32) < sel_min_y
-                            || (y as i32) > sel_max_y
+                            || (y as i32) > sel_max_y)
                         {
                             continue;
                         }
-                    }
                     let old_color = layer.canvas.get_pixel(x, y);
                     if old_color != new_color {
                         history_changes.push((x, y, old_color, new_color));
@@ -1587,16 +1586,14 @@ impl eframe::App for PixelBuddyApp {
         }
 
         // Brush size
-        if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket)) {
-            if self.editor.brush_size > 1 {
+        if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket))
+            && self.editor.brush_size > 1 {
                 self.editor.brush_size -= 1;
             }
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket)) {
-            if self.editor.brush_size < 8 {
+        if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket))
+            && self.editor.brush_size < 8 {
                 self.editor.brush_size += 1;
             }
-        }
 
         // Frame nav
         if ctx.input(|i| i.key_pressed(egui::Key::Comma)) {

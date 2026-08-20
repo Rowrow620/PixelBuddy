@@ -1155,11 +1155,9 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                         .selectable_label(is_latest, label)
                                         .on_hover_text("Click to jump to this point in history")
                                         .clicked()
-                                    {
-                                        if app.editor.jump_to_undo_index(idx) {
+                                        && app.editor.jump_to_undo_index(idx) {
                                             app.texture_dirty = true;
                                         }
-                                    }
                                 }
 
                                 for (idx, desc) in redo_descs.iter().enumerate() {
