@@ -445,6 +445,8 @@ impl Default for StoredEditorPreferences {
 #[serde(deny_unknown_fields)]
 struct StoredAnimation {
     frames: Vec<StoredAnimationFrame>,
+    #[serde(default)]
+    tags: Vec<crate::document::animation::FrameTag>,
     current_frame_index: usize,
     fps: u32,
     onion_skin_enabled: bool,
@@ -460,6 +462,7 @@ impl StoredAnimation {
                 .iter()
                 .map(StoredAnimationFrame::from_runtime)
                 .collect(),
+            tags: animation.tags.clone(),
             current_frame_index: animation.current_frame_index,
             fps: animation.fps,
             onion_skin_enabled: animation.onion_skin_enabled,
@@ -518,6 +521,7 @@ impl StoredAnimation {
 
         Ok(AnimationManager {
             frames,
+            tags: self.tags,
             current_frame_index: self.current_frame_index,
             fps: self.fps,
             is_playing: false,
@@ -1053,6 +1057,7 @@ mod tests {
                         }],
                     },
                 }],
+                tags: Vec::new(),
                 current_frame_index: 0,
                 fps: 8,
                 onion_skin_enabled: false,
