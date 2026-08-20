@@ -26,8 +26,17 @@ impl AnimationFrame {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct FrameTag {
+    pub name: String,
+    pub color: [f32; 3],
+    pub from_frame: usize,
+    pub to_frame: usize,
+}
+
 pub struct AnimationManager {
     pub frames: Vec<AnimationFrame>,
+    pub tags: Vec<FrameTag>,
     pub current_frame_index: usize,
     pub fps: u32,
     pub is_playing: bool,
@@ -40,6 +49,7 @@ impl AnimationManager {
     pub fn new(initial_doc: Document) -> Self {
         Self {
             frames: vec![AnimationFrame::new(initial_doc)],
+            tags: Vec::new(),
             current_frame_index: 0,
             fps: 8,
             is_playing: false,
@@ -127,7 +137,19 @@ impl AnimationManager {
         let duration_ms = Self::frame_duration_ms_for_fps(self.fps);
         self.frames
             .insert(idx, AnimationFrame::with_duration(new_doc, duration_ms));
+        self.adjust_tags_for_insertion(idx);
         self.current_frame_index = idx;
+    }
+
+    fn adjust_tags_for_insertion(&mut self, insert_index: usize) {
+        for tag in &mut self.tags {
+            if tag.from_frame >= insert_index {
+                tag.from_frame += 1;
+            }
+            if tag.to_frame >= insert_index || (tag.from_frame < insert_index && tag.to_frame >= insert_index.saturating_sub(1)) {
+                tag.to_frame += 1;
+            }
+        }
     }
 
     pub fn duplicate_frame(&mut self) {
@@ -136,6 +158,7 @@ impl AnimationManager {
         let duration_ms = self.current_frame().duration_ms.max(1);
         self.frames
             .insert(idx, AnimationFrame::with_duration(cloned_doc, duration_ms));
+        self.adjust_tags_for_insertion(idx);
         self.current_frame_index = idx;
     }
 
@@ -158,6 +181,7 @@ impl AnimationManager {
             insert_index,
             AnimationFrame::with_duration(frame.document, frame.duration_ms),
         );
+        self.adjust_tags_for_insertion(insert_index);
         self.current_frame_index = insert_index;
     }
 
@@ -179,6 +203,8 @@ impl AnimationManager {
         let frame = self.frames.remove(from);
         self.frames.insert(to, frame);
 
+        self.adjust_tags_for_move(from, to);
+
         self.current_frame_index = if selected_index == from {
             to
         } else if from < to && (from < selected_index && selected_index <= to) {
@@ -192,11 +218,77 @@ impl AnimationManager {
         true
     }
 
+    fn adjust_tags_for_move(&mut self, from: usize, to: usize) {
+        // Simple approach: we simulate the move by removing and inserting,
+        // but semantically it's better to just shift tags.
+        // Actually, if a frame moves within a tag, the tag bounds might not change,
+        // or they might shift.
+        // If it's too complex, we can use a simpler approach or just let bounds shift.
+        // Let's do the exact math:
+        // When frame at `from` is removed, things after `from` shift left.
+        // Then it's inserted at `to`, things after `to` shift right.
+        for tag in &mut self.tags {
+            // Remove phase
+            let mut tag_from = tag.from_frame;
+            let mut tag_to = tag.to_frame;
+            let mut frame_was_in_tag = false;
+
+            if from >= tag_from && from <= tag_to {
+                frame_was_in_tag = true;
+                tag_to = tag_to.saturating_sub(1);
+            } else if from < tag_from {
+                tag_from = tag_from.saturating_sub(1);
+                tag_to = tag_to.saturating_sub(1);
+            }
+
+            // Insert phase
+            if to <= tag_from {
+                tag_from += 1;
+                tag_to += 1;
+            } else if to <= tag_to + 1 && frame_was_in_tag {
+                // If it was in the tag and inserted adjacent or inside, we expand the tag
+                tag_to += 1;
+            } else if to <= tag_to {
+                tag_to += 1;
+            }
+
+            // If it was in the tag, and was moved outside of the tag...
+            // the tag shrinks, which we handled in remove phase.
+
+            tag.from_frame = tag_from;
+            tag.to_frame = tag_to;
+        }
+    }
+
     pub fn remove_frame(&mut self) {
         if self.frames.len() > 1 {
             self.frames.remove(self.current_frame_index);
+            self.adjust_tags_for_removal(self.current_frame_index);
             if self.current_frame_index >= self.frames.len() {
                 self.current_frame_index = self.frames.len() - 1;
+            }
+        }
+    }
+
+    fn adjust_tags_for_removal(&mut self, remove_index: usize) {
+        let mut i = 0;
+        while i < self.tags.len() {
+            let mut remove_tag = false;
+            let tag = &mut self.tags[i];
+            if remove_index < tag.from_frame {
+                tag.from_frame = tag.from_frame.saturating_sub(1);
+                tag.to_frame = tag.to_frame.saturating_sub(1);
+            } else if remove_index >= tag.from_frame && remove_index <= tag.to_frame {
+                if tag.from_frame == tag.to_frame {
+                    remove_tag = true;
+                } else {
+                    tag.to_frame = tag.to_frame.saturating_sub(1);
+                }
+            }
+            if remove_tag {
+                self.tags.remove(i);
+            } else {
+                i += 1;
             }
         }
     }

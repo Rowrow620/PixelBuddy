@@ -214,6 +214,7 @@ pub struct PixelBuddyApp {
     pub vertical_guides: Vec<i32>,
     pub dragging_guide: Option<(bool, usize)>,
     pub tile_mode: TileMode,
+    pub frame_thumbnails: Vec<Option<TextureHandle>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -276,6 +277,7 @@ impl PixelBuddyApp {
             vertical_guides: Vec::new(),
             dragging_guide: None,
             tile_mode: TileMode::None,
+            frame_thumbnails: vec![None],
         }
     }
 
@@ -363,12 +365,14 @@ impl PixelBuddyApp {
                 self.editor.animation = animation;
                 self.editor.history.clear();
                 self.editor.mark_saved(); 
+                self.frame_thumbnails.clear();
                 self.status_message = Some((
                     format!("Imported sprite sheet {file_name}"),
                     false,
                 ));
             }
         }
+        self.frame_thumbnails.resize(self.editor.animation.frames.len(), None);
     }
 
     /// Opens a format-aware Save As dialog for the complete editable project.
@@ -550,10 +554,26 @@ impl PixelBuddyApp {
                 ..Default::default()
             };
             if let Some(texture) = &mut self.canvas_texture {
-                texture.set(image, options);
+                texture.set(image.clone(), options);
             } else {
-                self.canvas_texture = Some(ctx.load_texture("canvas", image, options));
+                self.canvas_texture = Some(ctx.load_texture("canvas", image.clone(), options));
             }
+
+            if self.frame_thumbnails.len() != self.editor.animation.frames.len() {
+                self.frame_thumbnails.resize(self.editor.animation.frames.len(), None);
+            }
+            
+            let current_index = self.editor.animation.current_frame_index;
+            if let Some(thumb) = &mut self.frame_thumbnails[current_index] {
+                thumb.set(image, options);
+            } else {
+                self.frame_thumbnails[current_index] = Some(ctx.load_texture(
+                    format!("pixelbuddy_thumb_{}", current_index),
+                    image,
+                    options,
+                ));
+            }
+
             self.texture_dirty = false;
         }
     }

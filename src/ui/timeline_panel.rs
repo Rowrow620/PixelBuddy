@@ -39,7 +39,7 @@ fn frame_drop_destination(
 
 pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     egui::TopBottomPanel::bottom("timeline_panel")
-        .exact_height(58.0)
+        .exact_height(100.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 // Playback Controls
@@ -112,6 +112,8 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     .clicked()
                 {
                     app.editor.add_frame();
+                    let current = app.editor.animation.current_frame_index;
+                    app.frame_thumbnails.insert(current, None);
                     app.texture_dirty = true;
                     app.invalidate_onion_skin_cache();
                 }
@@ -121,6 +123,8 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     .clicked()
                 {
                     app.editor.duplicate_frame();
+                    let current = app.editor.animation.current_frame_index;
+                    app.frame_thumbnails.insert(current, None);
                     app.texture_dirty = true;
                     app.invalidate_onion_skin_cache();
                 }
@@ -130,8 +134,10 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     .clicked()
                 {
                     let frame_count_before = app.editor.animation.frames.len();
+                    let to_remove = app.editor.animation.current_frame_index;
                     app.editor.remove_frame();
                     if app.editor.animation.frames.len() != frame_count_before {
+                        app.frame_thumbnails.remove(to_remove);
                         app.texture_dirty = true;
                         app.invalidate_onion_skin_cache();
                     }
@@ -156,6 +162,8 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     .clicked()
                     && app.editor.paste_frame_after_current()
                 {
+                    let current = app.editor.animation.current_frame_index;
+                    app.frame_thumbnails.insert(current, None);
                     app.texture_dirty = true;
                     app.invalidate_onion_skin_cache();
                 }
@@ -169,28 +177,62 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 egui::ScrollArea::horizontal()
                     .id_salt("timeline_frames_scroll")
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for i in 0..frame_count {
-                                let is_active = i == current_frame;
-                                let label = format!("Frame {}", i + 1);
+                        ui.vertical(|ui| {
+                            let tag_row_height = 18.0;
+                            let tags_rect_start = ui.cursor().min;
+                            ui.add_space(tag_row_height);
+                            
+                            let mut frame_rects = Vec::new();
 
-                                let mut button =
-                                    egui::Button::new(egui::RichText::new(&label).size(11.0))
-                                        .min_size(egui::vec2(54.0, 26.0));
+                            ui.horizontal(|ui| {
+                                for i in 0..frame_count {
+                                    let is_active = i == current_frame;
+                                    let label = format!("Frame {}", i + 1);
 
-                                if is_active {
-                                    button = button.stroke(egui::Stroke::new(
-                                        2.0_f32,
-                                        ui.visuals().selection.bg_fill,
-                                    ));
-                                }
+                                    let mut frame_response = if let Some(Some(thumb)) = app.frame_thumbnails.get(i) {
+                                        let btn = egui::ImageButton::new(
+                                            egui::Image::new(thumb)
+                                                .fit_to_exact_size(egui::vec2(32.0, 32.0))
+                                                .maintain_aspect_ratio(true)
+                                        );
+                                        let frame_response = ui.add(btn.sense(egui::Sense::click_and_drag())).on_hover_text(&label);
+                                        if is_active {
+                                            ui.painter().rect_stroke(
+                                                frame_response.rect,
+                                                2.0,
+                                                egui::Stroke::new(2.0_f32, ui.visuals().selection.bg_fill),
+                                                egui::StrokeKind::Inside,
+                                            );
+                                        }
+                                        frame_response
+                                    } else {
+                                        let mut button =
+                                            egui::Button::new(egui::RichText::new(&label).size(11.0))
+                                                .min_size(egui::vec2(32.0, 32.0));
 
-                                // One response owns both click and drag. The
-                                // previous drag-source wrapper overlaid a
-                                // drag-only response on the button, which
-                                // swallowed ordinary clicks before selection
-                                // could see them.
-                                let frame_response = ui.add(button.sense(egui::Sense::click_and_drag()));
+                                        if is_active {
+                                            button = button.stroke(egui::Stroke::new(
+                                                2.0_f32,
+                                                ui.visuals().selection.bg_fill,
+                                            ));
+                                        }
+                                        ui.add(button.sense(egui::Sense::click_and_drag())).on_hover_text(&label)
+                                    };
+
+                                    frame_rects.push(frame_response.rect);
+                                    
+                                    // Add Tag context menu
+                                    frame_response.context_menu(|ui| {
+                                        if ui.button("Create Tag Here").clicked() {
+                                            app.editor.animation.tags.push(crate::document::animation::FrameTag {
+                                                name: "New Tag".to_owned(),
+                                                color: [0.8, 0.2, 0.2],
+                                                from_frame: i,
+                                                to_frame: i,
+                                            });
+                                            ui.close_menu();
+                                        }
+                                    });
                                 frame_response.dnd_set_drag_payload(FrameDragPayload {
                                     source_index: i,
                                 });
@@ -243,6 +285,8 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                     {
                                         if app.editor.move_frame(payload.source_index, destination)
                                         {
+                                            let thumb = app.frame_thumbnails.remove(payload.source_index);
+                                            app.frame_thumbnails.insert(destination, thumb);
                                             app.texture_dirty = true;
                                             app.invalidate_onion_skin_cache();
                                         }
@@ -266,6 +310,54 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                     app.editor.select_frame(i);
                                     app.texture_dirty = true;
                                 }
+                            }
+                        });
+
+                            // Render Tags overlay
+                            let painter = ui.painter();
+                            let mut tag_to_remove = None;
+                            
+                            for (tag_idx, tag) in app.editor.animation.tags.iter_mut().enumerate() {
+                                if tag.from_frame < frame_rects.len() && tag.to_frame < frame_rects.len() {
+                                    let start_rect = frame_rects[tag.from_frame];
+                                    let end_rect = frame_rects[tag.to_frame];
+                                    
+                                    let tag_rect = egui::Rect::from_min_max(
+                                        egui::pos2(start_rect.left(), tags_rect_start.y),
+                                        egui::pos2(end_rect.right(), tags_rect_start.y + tag_row_height - 2.0),
+                                    );
+                                    
+                                    let color = egui::Color32::from_rgb(
+                                        (tag.color[0] * 255.0) as u8,
+                                        (tag.color[1] * 255.0) as u8,
+                                        (tag.color[2] * 255.0) as u8,
+                                    );
+                                    
+                                    painter.rect_filled(tag_rect, 4.0, color);
+                                    painter.text(
+                                        tag_rect.min + egui::vec2(4.0, 2.0),
+                                        egui::Align2::LEFT_TOP,
+                                        &tag.name,
+                                        egui::FontId::proportional(10.0),
+                                        egui::Color32::WHITE,
+                                    );
+                                    
+                                    // Interact with tag (edit/delete)
+                                    let tag_id = ui.id().with("tag").with(tag_idx);
+                                    let tag_response = ui.interact(tag_rect, tag_id, egui::Sense::click_and_drag());
+                                    tag_response.context_menu(|ui| {
+                                        ui.text_edit_singleline(&mut tag.name);
+                                        ui.color_edit_button_rgb(&mut tag.color);
+                                        if ui.button("Delete Tag").clicked() {
+                                            tag_to_remove = Some(tag_idx);
+                                            ui.close_menu();
+                                        }
+                                    });
+                                }
+                            }
+                            
+                            if let Some(idx) = tag_to_remove {
+                                app.editor.animation.tags.remove(idx);
                             }
                         });
                     });
