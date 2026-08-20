@@ -98,7 +98,12 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     }
                     ui.separator();
                     if ui.button("Select All (Ctrl+A)").clicked() {
-                        app.editor.selection.set_rect(0, 0, (app.editor.document().width as i32) - 1, (app.editor.document().height as i32) - 1);
+                        app.editor.selection.set_rect(
+                            0,
+                            0,
+                            (app.editor.document().width as i32) - 1,
+                            (app.editor.document().height as i32) - 1,
+                        );
                         ui.close_menu();
                     }
                     if ui.button("Deselect (Ctrl+D)").clicked() {
