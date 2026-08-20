@@ -14,7 +14,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 egui::Stroke::new(1.0_f32, crate::ui::theme::SEPARATOR_COLOR),
             );
 
-            ui.allocate_ui_with_layout(ui.available_size(), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Right side: Zoom controls
                 if egui::Button::new("➕")
                     .frame(false)
