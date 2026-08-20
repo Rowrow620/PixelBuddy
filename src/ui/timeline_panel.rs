@@ -39,10 +39,10 @@ fn frame_drop_destination(
 
 pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     egui::TopBottomPanel::bottom("timeline_panel")
-        .exact_height(100.0)
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                // Playback Controls
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    // Playback Controls
                 ui.add_space(4.0);
                 let play_icon = if app.editor.animation.is_playing {
                     "⏸"
@@ -170,6 +170,10 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
 
                 ui.separator();
 
+                }); // End of horizontal controls row
+                
+                ui.separator();
+
                 // Frame Selection Track
                 let current_frame = app.editor.animation.current_frame_index;
                 let frame_count = app.editor.animation.frames.len();
@@ -189,41 +193,52 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                     let is_active = i == current_frame;
                                     let label = format!("Frame {}", i + 1);
 
-                                    let frame_response = if let Some(Some(thumb)) = app.frame_thumbnails.get(i) {
-                                        let btn = egui::ImageButton::new(
-                                            egui::Image::new(thumb)
-                                                .fit_to_exact_size(egui::vec2(32.0, 32.0))
-                                                .maintain_aspect_ratio(true)
-                                        );
-                                        let frame_response = ui.add(btn.sense(egui::Sense::click_and_drag())).on_hover_text(&label);
-                                        if is_active {
-                                            ui.painter().rect_stroke(
-                                                frame_response.rect,
-                                                2.0,
-                                                egui::Stroke::new(2.0_f32, ui.visuals().selection.bg_fill),
-                                                egui::StrokeKind::Inside,
+                                    let (frame_response, rect) = ui.vertical(|ui| {
+                                        ui.set_width(32.0); // Keep column tight
+                                        
+                                        let frame_response = if let Some(Some(thumb)) = app.frame_thumbnails.get(i) {
+                                            let btn = egui::ImageButton::new(
+                                                egui::Image::new(thumb)
+                                                    .fit_to_exact_size(egui::vec2(32.0, 32.0))
+                                                    .maintain_aspect_ratio(true)
                                             );
-                                        }
-                                        frame_response
-                                    } else {
-                                        let mut button =
-                                            egui::Button::new(egui::RichText::new(&label).size(11.0))
-                                                .min_size(egui::vec2(32.0, 32.0));
+                                            let frame_response = ui.add(btn.sense(egui::Sense::click_and_drag())).on_hover_text(&label);
+                                            if is_active {
+                                                ui.painter().rect_stroke(
+                                                    frame_response.rect,
+                                                    2.0,
+                                                    egui::Stroke::new(2.0_f32, ui.visuals().selection.bg_fill),
+                                                    egui::StrokeKind::Inside,
+                                                );
+                                            }
+                                            frame_response
+                                        } else {
+                                            let mut button =
+                                                egui::Button::new(egui::RichText::new(&label).size(11.0))
+                                                    .min_size(egui::vec2(32.0, 32.0));
 
-                                        if is_active {
-                                            button = button.stroke(egui::Stroke::new(
-                                                2.0_f32,
-                                                ui.visuals().selection.bg_fill,
-                                            ));
-                                        }
-                                        ui.add(button.sense(egui::Sense::click_and_drag())).on_hover_text(&label)
-                                    };
+                                            if is_active {
+                                                button = button.stroke(egui::Stroke::new(
+                                                    2.0_f32,
+                                                    ui.visuals().selection.bg_fill,
+                                                ));
+                                            }
+                                            ui.add(button.sense(egui::Sense::click_and_drag())).on_hover_text(&label)
+                                        };
+                                        
+                                        // Draw frame number below it
+                                        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                            ui.label(egui::RichText::new(format!("{}", i + 1)).size(10.0).color(egui::Color32::from_gray(140)));
+                                        });
 
-                                    frame_rects.push(frame_response.rect);
+                                        (frame_response.clone(), frame_response.rect)
+                                    }).inner;
+                                    
+                                    frame_rects.push(rect);
                                     
                                     // Add Tag context menu
                                     frame_response.context_menu(|ui| {
-                                        if ui.button("Create Tag Here").clicked() {
+                                        if ui.button("Create Tag").clicked() {
                                             app.editor.animation.tags.push(crate::document::animation::FrameTag {
                                                 name: "New Tag".to_owned(),
                                                 color: [0.8, 0.2, 0.2],
@@ -348,6 +363,20 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                     tag_response.context_menu(|ui| {
                                         ui.text_edit_singleline(&mut tag.name);
                                         ui.color_edit_button_rgb(&mut tag.color);
+                                        
+                                        ui.horizontal(|ui| {
+                                            ui.label("Frames:");
+                                            let mut from = tag.from_frame + 1;
+                                            if ui.add(egui::DragValue::new(&mut from).speed(0.1)).changed() {
+                                                tag.from_frame = from.saturating_sub(1).min(tag.to_frame);
+                                            }
+                                            ui.label("-");
+                                            let mut to = tag.to_frame + 1;
+                                            if ui.add(egui::DragValue::new(&mut to).speed(0.1)).changed() {
+                                                tag.to_frame = to.saturating_sub(1).max(tag.from_frame).min(frame_count.saturating_sub(1));
+                                            }
+                                        });
+
                                         if ui.button("Delete Tag").clicked() {
                                             tag_to_remove = Some(tag_idx);
                                             ui.close_menu();
