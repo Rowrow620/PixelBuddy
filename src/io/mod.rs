@@ -196,10 +196,7 @@ impl fmt::Display for IoError {
             }
             Self::InvalidCanvasDimensions { width, height } => write!(
                 formatter,
-                "Image dimensions {width}x{height} are invalid or exceed PixelBuddy's {}x{} / {}-pixel limit",
-                MAX_CANVAS_DIMENSION,
-                MAX_CANVAS_DIMENSION,
-                MAX_CANVAS_PIXELS,
+                "Image dimensions {width}x{height} are invalid or exceed PixelBuddy's {MAX_CANVAS_DIMENSION}x{MAX_CANVAS_DIMENSION} / {MAX_CANVAS_PIXELS}-pixel limit",
             ),
             Self::InvalidExportScale { scale } => {
                 write!(formatter, "Export scale must be at least 1 (got {scale})")

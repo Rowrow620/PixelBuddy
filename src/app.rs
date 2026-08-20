@@ -1799,7 +1799,7 @@ impl eframe::App for PixelBuddyApp {
                             .color(egui::Color32::from_rgb(248, 113, 113))
                             .strong(),
                     );
-                    ui.label(format!("Are you sure you want to resize to {}x{}?", w, h));
+                    ui.label(format!("Are you sure you want to resize to {w}x{h}?"));
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {

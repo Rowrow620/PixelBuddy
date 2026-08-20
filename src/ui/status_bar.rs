@@ -25,7 +25,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 let doc = app.editor.document();
 
                 ui.label(
-                    RichText::new(format!("Cursor: ({}, {})", cx, cy))
+                    RichText::new(format!("Cursor: ({cx}, {cy})"))
                         .color(Color32::from_white_alpha(180))
                         .size(12.0),
                 );
