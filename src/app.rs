@@ -165,6 +165,8 @@ pub struct PixelBuddyApp {
     onion_texture_pair: Option<(usize, usize)>,
     pub texture_dirty: bool,
     pub show_new_dialog: bool,
+    pub show_help_dialog: bool,
+    pub show_about_dialog: bool,
     pub pending_resize: Option<(u32, u32)>,
     pub new_width: String,
     pub new_height: String,
@@ -212,6 +214,8 @@ impl PixelBuddyApp {
             onion_texture_pair: None,
             texture_dirty: true,
             show_new_dialog: false,
+            show_help_dialog: false,
+            show_about_dialog: false,
             pending_resize: None,
             new_width: "64".to_string(),
             new_height: "64".to_string(),
@@ -622,20 +626,41 @@ impl PixelBuddyApp {
             return;
         };
         if layer.locked {
+            self.status_message = Some(("Layer is locked".to_owned(), true));
+            
             return;
         }
-
         // A tool can emit multiple writes to the same pixel (notably Move).
         // Keep only the final value before capturing the original color for undo.
         let final_changes: BTreeMap<(u32, u32), [u8; 4]> = changes
             .into_iter()
             .map(|(x, y, color)| ((x, y), color))
             .collect();
+        let (has_sel, sel_min_x, sel_max_x, sel_min_y, sel_max_y) = if self.editor.selection.active {
+            (
+                true,
+                self.editor.selection.min_x(),
+                self.editor.selection.max_x(),
+                self.editor.selection.min_y(),
+                self.editor.selection.max_y(),
+            )
+        } else {
+            (false, 0, 0, 0, 0)
+        };
         let mut history_changes = Vec::new();
         {
-            let layer = &self.editor.document().layers[active_layer_index];
+            let layer = &mut self.editor.document_mut().layers[active_layer_index];
             for ((x, y), new_color) in final_changes {
                 if layer.canvas.in_bounds(x as i32, y as i32) {
+                    if has_sel {
+                        if (x as i32) < sel_min_x
+                            || (x as i32) > sel_max_x
+                            || (y as i32) < sel_min_y
+                            || (y as i32) > sel_max_y
+                        {
+                            continue;
+                        }
+                    }
                     let old_color = layer.canvas.get_pixel(x, y);
                     if old_color != new_color {
                         history_changes.push((x, y, old_color, new_color));
@@ -647,6 +672,137 @@ impl PixelBuddyApp {
             let cmd = Box::new(DrawCommand::new(active_layer_index, history_changes));
             // Use the EditorState helper to avoid split-borrow issues
             self.editor.push_command(cmd);
+            self.texture_dirty = true;
+            self.invalidate_onion_skin_cache();
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        let active_layer_index = self.editor.document().active_layer_index;
+        let Some(layer) = self.editor.document().layers.get(active_layer_index) else {
+            return;
+        };
+        if layer.locked {
+            self.status_message = Some(("Layer is locked".to_owned(), true));
+            
+            return;
+        }
+
+        let mut changes = Vec::new();
+        let (min_x, max_x, min_y, max_y) = if self.editor.selection.active {
+            (
+                self.editor.selection.min_x(),
+                self.editor.selection.max_x(),
+                self.editor.selection.min_y(),
+                self.editor.selection.max_y(),
+            )
+        } else {
+            (0, self.editor.document().width.saturating_sub(1) as i32, 0, self.editor.document().height.saturating_sub(1) as i32)
+        };
+
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                changes.push((x as u32, y as u32, [0, 0, 0, 0]));
+            }
+        }
+        self.apply_tool_changes(changes);
+    }
+
+    pub fn flip_horizontal(&mut self) {
+        if self.editor.mutate_document("Flip Horizontal", |doc| {
+            let active_layer_index = doc.active_layer_index;
+            if active_layer_index >= doc.layers.len() || doc.layers[active_layer_index].locked {
+                return false;
+            }
+            let width = doc.width;
+            let height = doc.height;
+            let layer = &mut doc.layers[active_layer_index];
+            for y in 0..height {
+                for x in 0..(width / 2) {
+                    let opp_x = width - 1 - x;
+                    let left = layer.canvas.get_pixel(x, y);
+                    let right = layer.canvas.get_pixel(opp_x, y);
+                    layer.canvas.set_pixel(x, y, right);
+                    layer.canvas.set_pixel(opp_x, y, left);
+                }
+            }
+            true
+        }) {
+            self.texture_dirty = true;
+        }
+    }
+
+    pub fn flip_vertical(&mut self) {
+        if self.editor.mutate_document("Flip Vertical", |doc| {
+            let active_layer_index = doc.active_layer_index;
+            if active_layer_index >= doc.layers.len() || doc.layers[active_layer_index].locked {
+                return false;
+            }
+            let width = doc.width;
+            let height = doc.height;
+            let layer = &mut doc.layers[active_layer_index];
+            for y in 0..(height / 2) {
+                let opp_y = height - 1 - y;
+                for x in 0..width {
+                    let top = layer.canvas.get_pixel(x, y);
+                    let bottom = layer.canvas.get_pixel(x, opp_y);
+                    layer.canvas.set_pixel(x, y, bottom);
+                    layer.canvas.set_pixel(x, opp_y, top);
+                }
+            }
+            true
+        }) {
+            self.texture_dirty = true;
+        }
+    }
+
+    pub fn merge_down(&mut self) {
+        if self.editor.mutate_document("Merge Down", |doc| {
+            let active = doc.active_layer_index;
+            if active + 1 >= doc.layers.len() {
+                return false; // Already at the bottom
+            }
+            let width = doc.width;
+            let height = doc.height;
+            
+            // Render active over the one below it
+            let top_layer = doc.layers[active].clone();
+            let bottom_layer = &mut doc.layers[active + 1];
+            
+            if bottom_layer.locked {
+                return false;
+            }
+            
+            for y in 0..height {
+                for x in 0..width {
+                    let bottom_px = bottom_layer.canvas.get_pixel(x, y);
+                    let top_px = top_layer.canvas.get_pixel(x, y);
+                    let blended = crate::document::layer::Layer::blend_mode_apply(
+                        bottom_px,
+                        top_px,
+                        top_layer.blend_mode,
+                        top_layer.opacity,
+                    );
+                    bottom_layer.canvas.set_pixel(x, y, blended);
+                }
+            }
+            doc.remove_layer(active);
+            true
+        }) {
+            self.texture_dirty = true;
+            self.invalidate_onion_skin_cache();
+        }
+    }
+
+    pub fn flatten_visible(&mut self) {
+        if self.editor.mutate_document("Flatten Visible", |doc| {
+            let flattened = doc.flatten();
+            let mut layer = crate::document::layer::Layer::new("Background", doc.width, doc.height);
+            layer.canvas = flattened;
+            doc.layers = vec![layer];
+            doc.active_layer_index = 0;
+            true
+        }) {
             self.texture_dirty = true;
             self.invalidate_onion_skin_cache();
         }
@@ -684,7 +840,7 @@ impl PixelBuddyApp {
         self.editor.set_active_tool(tool);
     }
 
-    fn paste_origin(&self, clipboard_width: u32, clipboard_height: u32) -> (u32, u32) {
+    pub fn paste_origin(&self, clipboard_width: u32, clipboard_height: u32) -> (u32, u32) {
         let document = self.editor.document();
         let fallback = (
             document.width.saturating_sub(clipboard_width) / 2,
@@ -1372,6 +1528,12 @@ impl eframe::App for PixelBuddyApp {
         {
             self.texture_dirty = true;
         }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::N)) {
+            self.show_new_dialog = true;
+        }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::O)) {
+            crate::io::trigger_open_project(self.io_handler.sender.clone());
+        }
         if ctx.input(|i| !i.modifiers.ctrl && i.key_pressed(egui::Key::X)) {
             self.editor.swap_colors();
         }
@@ -1379,12 +1541,29 @@ impl eframe::App for PixelBuddyApp {
         if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D)) {
             self.editor.selection.deselect();
         }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::A)) {
+            self.editor.selection.set_rect(0, 0, (self.editor.document().width as i32) - 1, (self.editor.document().height as i32) - 1);
+        }
         if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C)) {
             let clipboard = crate::editor::clipboard::ClipboardBuffer::copy(
                 self.editor.document(),
                 &self.editor.selection,
             );
             self.editor.clipboard = clipboard;
+        }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::X)) {
+            let clipboard = crate::editor::clipboard::ClipboardBuffer::copy(
+                self.editor.document(),
+                &self.editor.selection,
+            );
+            self.editor.clipboard = clipboard;
+            if self.editor.clipboard.is_some() {
+                // Clear the copied area
+                self.clear_selection();
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+            self.clear_selection();
         }
         if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
             if let Some(buf) = &self.editor.clipboard.clone() {
@@ -1405,6 +1584,28 @@ impl eframe::App for PixelBuddyApp {
                 }
                 self.apply_tool_changes(changes);
             }
+        }
+
+        // Brush size
+        if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket)) {
+            if self.editor.brush_size > 1 {
+                self.editor.brush_size -= 1;
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket)) {
+            if self.editor.brush_size < 8 {
+                self.editor.brush_size += 1;
+            }
+        }
+
+        // Frame nav
+        if ctx.input(|i| i.key_pressed(egui::Key::Comma)) {
+            let count = self.editor.animation.frames.len(); self.editor.animation.select_frame((self.editor.animation.current_frame_index + count - 1) % count);
+            self.texture_dirty = true;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Period)) {
+            let count = self.editor.animation.frames.len(); self.editor.animation.select_frame((self.editor.animation.current_frame_index + 1) % count);
+            self.texture_dirty = true;
         }
 
         let tools = [
@@ -1498,6 +1699,81 @@ impl eframe::App for PixelBuddyApp {
                 });
             if !open {
                 self.show_new_dialog = false;
+            }
+        }
+
+        if self.show_help_dialog {
+            let mut open = true;
+            egui::Window::new("Keyboard Shortcuts")
+                .open(&mut open)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    egui::Grid::new("shortcuts_grid")
+                        .num_columns(2)
+                        .spacing([40.0, 4.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            let shortcuts = [
+                                ("Ctrl+N", "New Document"),
+                                ("Ctrl+O", "Open Project"),
+                                ("Ctrl+S", "Save Project"),
+                                ("Ctrl+Z", "Undo"),
+                                ("Ctrl+Y / Ctrl+Shift+Z", "Redo"),
+                                ("Ctrl+C", "Copy"),
+                                ("Ctrl+V", "Paste"),
+                                ("Ctrl+D", "Deselect"),
+                                ("X", "Swap Colors"),
+                                ("Space", "Play/Pause Animation"),
+                                ("H", "Hand Tool (Pan)"),
+                                ("Z", "Zoom Tool"),
+                                ("M", "Marquee Select"),
+                                ("V", "Move Tool"),
+                                ("B", "Pencil Tool"),
+                                ("E", "Eraser Tool"),
+                                ("L", "Line Tool"),
+                                ("R", "Rectangle Tool"),
+                                ("O", "Ellipse Tool"),
+                                ("G", "Fill Tool"),
+                                ("I", "Eyedropper Tool"),
+                            ];
+                            for (keys, desc) in shortcuts {
+                                ui.label(egui::RichText::new(keys).strong());
+                                ui.label(desc);
+                                ui.end_row();
+                            }
+                        });
+                    ui.separator();
+                    if ui.button("Close").clicked() {
+                        self.show_help_dialog = false;
+                    }
+                });
+            if !open {
+                self.show_help_dialog = false;
+            }
+        }
+
+        if self.show_about_dialog {
+            let mut open = true;
+            egui::Window::new("About PixelBuddy")
+                .open(&mut open)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.heading("PixelBuddy");
+                    ui.label("A lightweight, cross-platform pixel art editor built in Rust.");
+                    ui.add_space(8.0);
+                    ui.hyperlink_to(
+                        "View on GitHub",
+                        "https://github.com/rowrow620/PixelBuddy",
+                    );
+                    ui.add_space(8.0);
+                    if ui.button("Close").clicked() {
+                        self.show_about_dialog = false;
+                    }
+                });
+            if !open {
+                self.show_about_dialog = false;
             }
         }
 

@@ -15,53 +15,29 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         app.show_new_dialog = true;
                         ui.close_menu();
                     }
-                    if ui.button("Open").clicked() {
+                    if ui.button("Open Project (.pbud)").clicked() {
+                        io::trigger_open_project(app.io_handler.sender.clone());
+                        ui.close_menu();
+                    }
+                    if ui.button("Save Project (.pbud)").clicked() {
+                        io::trigger_save_project(&app.editor, app.io_handler.sender.clone());
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Import PNG").clicked() {
                         io::trigger_open_file(app.io_handler.sender.clone());
                         ui.close_menu();
                     }
-                    if ui.button("Save as PNG").clicked() {
-                        // Export is effectively Save as PNG for now
-                        if let Ok(png_data) = io::png::export_document_to_png(app.editor.document())
-                        {
-                            io::trigger_export(
-                                io::ExportRequest::png(png_data),
-                                app.io_handler.sender.clone(),
-                            );
-                        }
+                    if ui.button("Export PNG...").clicked() {
+                        app.open_png_export_dialog();
                         ui.close_menu();
                     }
-                    if ui.button("Export PNG").clicked() {
-                        if let Ok(png_data) = io::png::export_document_to_png(app.editor.document())
-                        {
-                            io::trigger_export(
-                                io::ExportRequest::png(png_data),
-                                app.io_handler.sender.clone(),
-                            );
-                        }
+                    if ui.button("Export Animated GIF...").clicked() {
+                        app.open_gif_export_dialog();
                         ui.close_menu();
                     }
-                    if ui.button("Export Animated GIF").clicked() {
-                        app.editor.copy_current_frame();
-                        if let Ok(gif_data) =
-                            io::gif::export_animation_to_gif(&app.editor.animation)
-                        {
-                            io::trigger_export(
-                                io::ExportRequest::gif(gif_data),
-                                app.io_handler.sender.clone(),
-                            );
-                        }
-                        ui.close_menu();
-                    }
-                    if ui.button("Export Sprite Sheet (PNG)").clicked() {
-                        app.editor.copy_current_frame();
-                        if let Ok(sheet_data) =
-                            io::spritesheet::export_spritesheet_png(&app.editor.animation)
-                        {
-                            io::trigger_export(
-                                io::ExportRequest::png(sheet_data),
-                                app.io_handler.sender.clone(),
-                            );
-                        }
+                    if ui.button("Export Sprite Sheet (PNG)...").clicked() {
+                        app.open_sprite_sheet_export_dialog();
                         ui.close_menu();
                     }
                 });
@@ -79,6 +55,79 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         }
                         ui.close_menu();
                     }
+                    ui.separator();
+                    if ui.button("Cut (Ctrl+X)").clicked() {
+                        let clipboard = crate::editor::clipboard::ClipboardBuffer::copy(
+                            app.editor.document(),
+                            &app.editor.selection,
+                        );
+                        app.editor.clipboard = clipboard;
+                        if app.editor.clipboard.is_some() {
+                            app.clear_selection();
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button("Copy (Ctrl+C)").clicked() {
+                        let clipboard = crate::editor::clipboard::ClipboardBuffer::copy(
+                            app.editor.document(),
+                            &app.editor.selection,
+                        );
+                        app.editor.clipboard = clipboard;
+                        ui.close_menu();
+                    }
+                    if ui.button("Paste (Ctrl+V)").clicked() {
+                        if let Some(buf) = &app.editor.clipboard.clone() {
+                            let (origin_x, origin_y) = app.paste_origin(buf.width, buf.height);
+                            let mut changes = Vec::new();
+                            for y in 0..buf.height {
+                                for x in 0..buf.width {
+                                    let idx = (y * buf.width + x) as usize;
+                                    let color = buf.pixels[idx];
+                                    if color[3] > 0 {
+                                        changes.push((
+                                            origin_x.saturating_add(x),
+                                            origin_y.saturating_add(y),
+                                            color,
+                                        ));
+                                    }
+                                }
+                            }
+                            app.apply_tool_changes(changes);
+                        }
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Select All (Ctrl+A)").clicked() {
+                        app.editor.selection.set_rect(0, 0, (app.editor.document().width as i32) - 1, (app.editor.document().height as i32) - 1);
+                        ui.close_menu();
+                    }
+                    if ui.button("Deselect (Ctrl+D)").clicked() {
+                        app.editor.selection.deselect();
+                        ui.close_menu();
+                    }
+                    if ui.button("Clear Selection (Del)").clicked() {
+                        app.clear_selection();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Flip Horizontal").clicked() {
+                        app.flip_horizontal();
+                        ui.close_menu();
+                    }
+                    if ui.button("Flip Vertical").clicked() {
+                        app.flip_vertical();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Merge Down").clicked() {
+                        app.merge_down();
+                        ui.close_menu();
+                    }
+                    if ui.button("Flatten Visible").clicked() {
+                        app.flatten_visible();
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     if ui.button("Swap Colors (X)").clicked() {
                         app.editor.swap_colors();
                         ui.close_menu();
@@ -175,6 +224,17 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     if ui.button("Reset Viewport Pan").clicked() {
                         app.pan_offset = egui::Vec2::ZERO;
                         app.auto_fit_requested = true;
+                        ui.close_menu();
+                    }
+                });
+
+                ui.menu_button("Help", |ui| {
+                    if ui.button("Keyboard Shortcuts").clicked() {
+                        app.show_help_dialog = true;
+                        ui.close_menu();
+                    }
+                    if ui.button("About PixelBuddy").clicked() {
+                        app.show_about_dialog = true;
                         ui.close_menu();
                     }
                 });

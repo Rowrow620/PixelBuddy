@@ -28,6 +28,7 @@ pub struct EditorState {
     pub primary_color: [u8; 4],
     pub secondary_color: [u8; 4],
     pub active_tool: ToolType,
+    pub brush_size: u8,
     pub selection: Selection,
     pub clipboard: Option<ClipboardBuffer>,
     /// Runtime-only clipboard for complete animation frames.
@@ -57,6 +58,7 @@ impl EditorState {
             primary_color: [0, 0, 0, 255],
             secondary_color: [255, 255, 255, 255],
             active_tool: ToolType::Pencil,
+            brush_size: 1,
             selection: Selection::new(),
             clipboard: None,
             frame_clipboard: None,
