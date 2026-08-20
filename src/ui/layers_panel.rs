@@ -434,26 +434,26 @@ fn palette_vertical_move_target(
 /// Transient inline-rename state. It intentionally lives in egui's temporary
 /// UI memory rather than the project, so an unfinished edit is never saved.
 #[derive(Clone)]
-struct LayerRenameDraft {
-    frame_index: usize,
-    layer_index: usize,
-    original_name: String,
-    name: String,
+pub(crate) struct LayerRenameDraft {
+    pub(crate) frame_index: usize,
+    pub(crate) layer_index: usize,
+    pub(crate) original_name: String,
+    pub(crate) name: String,
 }
 
-fn layer_rename_draft_id() -> egui::Id {
+pub(crate) fn layer_rename_draft_id() -> egui::Id {
     egui::Id::new("pixelbuddy.layer_rename_draft")
 }
 
-fn layer_rename_text_id(frame_index: usize, layer_index: usize) -> egui::Id {
-    egui::Id::new(("pixelbuddy.layer_rename_text", frame_index, layer_index))
+pub(crate) fn layer_rename_text_id(frame_index: usize, layer_index: usize) -> egui::Id {
+    egui::Id::new("pixelbuddy.layer_rename_text").with((frame_index, layer_index))
 }
 
-fn clear_layer_rename_draft(ctx: &egui::Context) {
+pub(crate) fn clear_layer_rename_draft(ctx: &egui::Context) {
     ctx.data_mut(|data| data.remove::<LayerRenameDraft>(layer_rename_draft_id()));
 }
 
-fn visibility_button(ui: &mut egui::Ui, visible: bool) -> egui::Response {
+pub(crate) fn visibility_button(ui: &mut egui::Ui, visible: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::click());
     let visuals = ui.style().interact(&response);
 
@@ -534,371 +534,277 @@ fn section_header(ui: &mut egui::Ui, title: &str) -> egui::Rect {
     rect
 }
 
+pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::Ui) {
+    section_header(ui, "Layers");
+
+    let layers_count = app.editor.document().layers.len();
+    let active_idx = app.editor.document().active_layer_index;
+    let frame_index = app.editor.animation.current_frame_index;
+    let mut new_active = active_idx;
+    let mut visibility_changes: Vec<(usize, bool)> = Vec::new();
+    let mut rename_change: Option<(usize, String)> = None;
+
+    // A frame/layer switch could invalidate an inline editor. Cancel
+    // its UI-only draft instead of applying it to a different layer.
+    let stale_rename_draft = ctx.data(|data| {
+        data.get_temp::<LayerRenameDraft>(layer_rename_draft_id())
+            .is_some_and(|draft| {
+                draft.frame_index != frame_index
+                    || app
+                        .editor
+                        .document()
+                        .layers
+                        .get(draft.layer_index)
+                        .map(|layer| layer.name.as_str())
+                        != Some(draft.original_name.as_str())
+            })
+    });
+    if stale_rename_draft {
+        clear_layer_rename_draft(ctx);
+    }
+
+    egui::ScrollArea::vertical()
+        .id_salt("layers_scroll")
+        .max_height(250.0)
+        .show(ui, |ui| {
+            // Iterate in reverse for Photoshop-like display (top layer listed first)
+            for i in (0..layers_count).rev() {
+                draw_layer_row_ui(
+                    ctx,
+                    app,
+                    ui,
+                    i,
+                    active_idx,
+                    frame_index,
+                    &mut visibility_changes,
+                    &mut rename_change,
+                    &mut new_active,
+                );
+            }
+        });
+
+    // Apply visibility changes
+    for (idx, visible) in &visibility_changes {
+        if app
+            .editor
+            .mutate_document("Toggle layer visibility", |document| {
+                let Some(layer) = document.layers.get_mut(*idx) else {
+                    return false;
+                };
+                if layer.visible == *visible {
+                    return false;
+                }
+                layer.visible = *visible;
+                true
+            })
+        {
+            app.texture_dirty = true;
+        }
+    }
+
+    if let Some((idx, name)) = rename_change {
+        // This uses a snapshot command rather than a direct field
+        // write so Rename participates in undo/redo and dirty state.
+        let _ = app.editor.mutate_document("Rename layer", move |document| {
+            let Some(layer) = document.layers.get_mut(idx) else {
+                return false;
+            };
+            if layer.name == name {
+                return false;
+            }
+            layer.name = name;
+            true
+        });
+    }
+
+    // Apply active layer selection
+    if new_active != active_idx {
+        app.editor.document_mut().active_layer_index = new_active;
+    }
+
+    ui.separator();
+
+    // Layer action buttons
+    ui.horizontal_wrapped(|ui| {
+        let button_size = egui::vec2(32.0, 24.0);
+        let icon_size = egui::vec2(18.0, 18.0);
+        let text_color = ui.visuals().text_color();
+
+        let add_img = egui::Image::new(egui::include_image!("../../assets/icons/plus.svg"))
+            .tint(text_color)
+            .fit_to_exact_size(icon_size);
+        if ui
+            .add(egui::Button::image(add_img).min_size(button_size))
+            .on_hover_text("Add Layer")
+            .clicked()
+            && app.editor.mutate_document("Add layer", |document| {
+                document.add_layer();
+                true
+            })
+        {
+            clear_layer_rename_draft(ctx);
+            app.texture_dirty = true;
+        }
+
+        let del_img =
+            egui::Image::new(egui::include_image!("../../assets/icons/trash.svg"))
+                .tint(text_color)
+                .fit_to_exact_size(icon_size);
+        if ui
+            .add_enabled(
+                layers_count > 1,
+                egui::Button::image(del_img).min_size(button_size),
+            )
+            .on_hover_text("Delete Layer")
+            .clicked()
+        {
+            let active_layer = app.editor.document().active_layer_index;
+            if app.editor.mutate_document("Delete layer", |document| {
+                if document.layers.len() <= 1 || active_layer >= document.layers.len() {
+                    return false;
+                }
+                document.remove_layer(active_layer);
+                true
+            }) {
+                clear_layer_rename_draft(ctx);
+                app.texture_dirty = true;
+            }
+        }
+
+        let dup_img = egui::Image::new(egui::include_image!("../../assets/icons/copy.svg"))
+            .tint(text_color)
+            .fit_to_exact_size(icon_size);
+        if ui
+            .add(egui::Button::image(dup_img).min_size(button_size))
+            .on_hover_text("Duplicate Layer")
+            .clicked()
+        {
+            let active_layer = app.editor.document().active_layer_index;
+            if app.editor.mutate_document("Duplicate layer", |document| {
+                if active_layer >= document.layers.len() {
+                    return false;
+                }
+                document.duplicate_layer(active_layer);
+                true
+            }) {
+                clear_layer_rename_draft(ctx);
+                app.texture_dirty = true;
+            }
+        }
+
+        let up_img =
+            egui::Image::new(egui::include_image!("../../assets/icons/arrow-up.svg"))
+                .tint(text_color)
+                .fit_to_exact_size(icon_size);
+        if ui
+            .add(egui::Button::image(up_img).min_size(button_size))
+            .on_hover_text("Move Up")
+            .clicked()
+        {
+            let idx = app.editor.document().active_layer_index;
+            if idx + 1 < layers_count
+                && app.editor.mutate_document("Move layer up", |document| {
+                    document.move_layer(idx, idx + 1);
+                    true
+                })
+            {
+                clear_layer_rename_draft(ctx);
+                app.texture_dirty = true;
+            }
+        }
+
+        let down_img =
+            egui::Image::new(egui::include_image!("../../assets/icons/arrow-down.svg"))
+                .tint(text_color)
+                .fit_to_exact_size(icon_size);
+        if ui
+            .add(egui::Button::image(down_img).min_size(button_size))
+            .on_hover_text("Move Down")
+            .clicked()
+        {
+            let idx = app.editor.document().active_layer_index;
+            if idx > 0
+                && app.editor.mutate_document("Move layer down", |document| {
+                    document.move_layer(idx, idx - 1);
+                    true
+                })
+            {
+                clear_layer_rename_draft(ctx);
+                app.texture_dirty = true;
+            }
+        }
+    });
+
+    ui.separator();
+    ui.add_space(8.0);
+
+    // Active layer properties
+    if layers_count > 0 {
+        let active = app.editor.document().active_layer_index;
+
+        ui.label("Opacity")
+            .on_hover_text("Layer opacity (0 = transparent, 1 = opaque)");
+        let mut opacity = app.editor.document().layers[active].opacity;
+        if ui
+            .add(egui::Slider::new(&mut opacity, 0.0..=1.0).fixed_decimals(2))
+            .changed()
+        {
+            app.editor.document_mut().layers[active].opacity = opacity;
+            app.texture_dirty = true;
+        }
+
+        let mut locked = app.editor.document().layers[active].locked;
+        if ui
+            .checkbox(&mut locked, "Lock layer")
+            .on_hover_text("Prevent accidental edits to this layer")
+            .clicked()
+            && app.editor.mutate_document("Lock layer", |document| {
+                let Some(layer) = document.layers.get_mut(active) else {
+                    return false;
+                };
+                if layer.locked == locked {
+                    return false;
+                }
+                layer.locked = locked;
+                true
+            })
+        {
+            app.texture_dirty = true;
+        }
+
+        egui::ComboBox::from_label("Blend mode")
+            .selected_text(format!("{:?}", app.editor.document().layers[active].blend_mode))
+            .show_ui(ui, |ui| {
+                for mode in &[
+                    BlendMode::Normal,
+                    BlendMode::Multiply,
+                    BlendMode::Screen,
+                    BlendMode::Overlay,
+                ] {
+                    if ui
+                        .selectable_value(
+                            &mut app.editor.document_mut().layers[active].blend_mode,
+                            *mode,
+                            format!("{:?}", mode),
+                        )
+                        .changed()
+                    {
+                        app.editor.mark_dirty();
+                        app.texture_dirty = true;
+                    }
+                }
+            });
+    }
+}
+
 pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     egui::SidePanel::right("layers_panel")
         .exact_width(200.0)
         .show_separator_line(false)
         .show(ctx, |ui| {
-            section_header(ui, "Layers");
-
-            let layers_count = app.editor.document().layers.len();
-            let active_idx = app.editor.document().active_layer_index;
-            let frame_index = app.editor.animation.current_frame_index;
-            let mut new_active = active_idx;
-            let mut visibility_changes: Vec<(usize, bool)> = Vec::new();
-            let mut rename_change: Option<(usize, String)> = None;
-
-            // A frame/layer switch could invalidate an inline editor. Cancel
-            // its UI-only draft instead of applying it to a different layer.
-            let stale_rename_draft = ctx.data(|data| {
-                data.get_temp::<LayerRenameDraft>(layer_rename_draft_id())
-                    .is_some_and(|draft| {
-                        draft.frame_index != frame_index
-                            || app
-                                .editor
-                                .document()
-                                .layers
-                                .get(draft.layer_index)
-                                .map(|layer| layer.name.as_str())
-                                != Some(draft.original_name.as_str())
-                    })
-            });
-            if stale_rename_draft {
-                clear_layer_rename_draft(ctx);
-            }
-
-            egui::ScrollArea::vertical()
-                .id_salt("layers_scroll")
-                .max_height(250.0)
-                .show(ui, |ui| {
-                    // Iterate in reverse for Photoshop-like display (top layer listed first)
-                    for i in (0..layers_count).rev() {
-                        let is_active = i == active_idx;
-                        let layer_name = app.editor.document().layers[i].name.clone();
-                        let layer_visible = app.editor.document().layers[i].visible;
-                        let rename_draft = ctx.data(|data| {
-                            data.get_temp::<LayerRenameDraft>(layer_rename_draft_id())
-                        });
-                        let is_renaming = rename_draft.as_ref().is_some_and(|draft| {
-                            draft.frame_index == frame_index
-                                && draft.layer_index == i
-                                && draft.original_name == layer_name
-                        });
-
-                        let mut frame = egui::Frame::NONE
-                            .inner_margin(egui::Margin::same(4))
-                            .corner_radius(4);
-
-                        if is_active {
-                            frame = frame.fill(ui.visuals().selection.bg_fill);
-                        }
-
-                        frame.show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                // Visibility toggle
-                                if visibility_button(ui, layer_visible).clicked() {
-                                    visibility_changes.push((i, !layer_visible));
-                                }
-
-                                if is_renaming {
-                                    let mut draft = rename_draft
-                                        .expect("rename state was checked immediately above");
-                                    let text_id = layer_rename_text_id(frame_index, i);
-                                    let response = ui
-                                        .add(
-                                            egui::TextEdit::singleline(&mut draft.name)
-                                                .id(text_id)
-                                                .desired_width(ui.available_width())
-                                                .text_color(Color32::WHITE)
-                                                .hint_text("Layer name"),
-                                        )
-                                        .on_hover_text("Rename layer");
-                                    let escape_pressed = response.has_focus()
-                                        && ui.input(|input| input.key_pressed(egui::Key::Escape));
-                                    let should_commit = !escape_pressed
-                                        && ((response.has_focus()
-                                            && ui.input(|input| {
-                                                input.key_pressed(egui::Key::Enter)
-                                            }))
-                                            || response.lost_focus());
-
-                                    if escape_pressed {
-                                        clear_layer_rename_draft(ctx);
-                                    } else if should_commit {
-                                        clear_layer_rename_draft(ctx);
-                                        if draft.name != layer_name {
-                                            rename_change = Some((i, draft.name));
-                                        }
-                                    } else {
-                                        ctx.data_mut(|data| {
-                                            data.insert_temp(layer_rename_draft_id(), draft)
-                                        });
-                                    }
-                                } else {
-                                    // Keep selection and renaming separate:
-                                    // click selects, double-click opens an inline editor.
-                                    let response = ui
-                                        .selectable_label(
-                                            is_active,
-                                            egui::RichText::new(&layer_name).color(if is_active {
-                                                Color32::WHITE
-                                            } else {
-                                                ui.visuals().text_color()
-                                            }),
-                                        )
-                                        .on_hover_text("Double-click to rename layer");
-                                    if response.clicked() {
-                                        new_active = i;
-                                    }
-                                    if response.double_clicked() {
-                                        ctx.data_mut(|data| {
-                                            data.insert_temp(
-                                                layer_rename_draft_id(),
-                                                LayerRenameDraft {
-                                                    frame_index,
-                                                    layer_index: i,
-                                                    original_name: layer_name.clone(),
-                                                    name: layer_name,
-                                                },
-                                            )
-                                        });
-                                        ui.memory_mut(|memory| {
-                                            memory.request_focus(layer_rename_text_id(
-                                                frame_index,
-                                                i,
-                                            ));
-                                        });
-                                        ctx.request_repaint();
-                                    }
-                                }
-                            });
-                        });
-                    }
-                });
-
-            // Apply visibility changes
-            for (idx, visible) in &visibility_changes {
-                if app
-                    .editor
-                    .mutate_document("Toggle layer visibility", |document| {
-                        let Some(layer) = document.layers.get_mut(*idx) else {
-                            return false;
-                        };
-                        if layer.visible == *visible {
-                            return false;
-                        }
-                        layer.visible = *visible;
-                        true
-                    })
-                {
-                    app.texture_dirty = true;
-                }
-            }
-
-            if let Some((idx, name)) = rename_change {
-                // This uses a snapshot command rather than a direct field
-                // write so Rename participates in undo/redo and dirty state.
-                let _ = app.editor.mutate_document("Rename layer", move |document| {
-                    let Some(layer) = document.layers.get_mut(idx) else {
-                        return false;
-                    };
-                    if layer.name == name {
-                        return false;
-                    }
-                    layer.name = name;
-                    true
-                });
-            }
-
-            // Apply active layer selection
-            if new_active != active_idx {
-                app.editor.document_mut().active_layer_index = new_active;
-            }
-
-            ui.separator();
-
-            // Layer action buttons
-            ui.horizontal_wrapped(|ui| {
-                let button_size = egui::vec2(32.0, 24.0);
-                let icon_size = egui::vec2(18.0, 18.0);
-                let text_color = ui.visuals().text_color();
-
-                let add_img = egui::Image::new(egui::include_image!("../../assets/icons/plus.svg"))
-                    .tint(text_color)
-                    .fit_to_exact_size(icon_size);
-                if ui
-                    .add(egui::Button::image(add_img).min_size(button_size))
-                    .on_hover_text("Add Layer")
-                    .clicked()
-                    && app.editor.mutate_document("Add layer", |document| {
-                        document.add_layer();
-                        true
-                    })
-                {
-                    clear_layer_rename_draft(ctx);
-                    app.texture_dirty = true;
-                }
-
-                let del_img =
-                    egui::Image::new(egui::include_image!("../../assets/icons/trash.svg"))
-                        .tint(text_color)
-                        .fit_to_exact_size(icon_size);
-                if ui
-                    .add_enabled(
-                        layers_count > 1,
-                        egui::Button::image(del_img).min_size(button_size),
-                    )
-                    .on_hover_text("Delete Layer")
-                    .clicked()
-                {
-                    let active_layer = app.editor.document().active_layer_index;
-                    if app.editor.mutate_document("Delete layer", |document| {
-                        if document.layers.len() <= 1 || active_layer >= document.layers.len() {
-                            return false;
-                        }
-                        document.remove_layer(active_layer);
-                        true
-                    }) {
-                        clear_layer_rename_draft(ctx);
-                        app.texture_dirty = true;
-                    }
-                }
-
-                let dup_img = egui::Image::new(egui::include_image!("../../assets/icons/copy.svg"))
-                    .tint(text_color)
-                    .fit_to_exact_size(icon_size);
-                if ui
-                    .add(egui::Button::image(dup_img).min_size(button_size))
-                    .on_hover_text("Duplicate Layer")
-                    .clicked()
-                {
-                    let active_layer = app.editor.document().active_layer_index;
-                    if app.editor.mutate_document("Duplicate layer", |document| {
-                        if active_layer >= document.layers.len() {
-                            return false;
-                        }
-                        document.duplicate_layer(active_layer);
-                        true
-                    }) {
-                        clear_layer_rename_draft(ctx);
-                        app.texture_dirty = true;
-                    }
-                }
-
-                let up_img =
-                    egui::Image::new(egui::include_image!("../../assets/icons/arrow-up.svg"))
-                        .tint(text_color)
-                        .fit_to_exact_size(icon_size);
-                if ui
-                    .add(egui::Button::image(up_img).min_size(button_size))
-                    .on_hover_text("Move Up")
-                    .clicked()
-                {
-                    let idx = app.editor.document().active_layer_index;
-                    if idx + 1 < layers_count
-                        && app.editor.mutate_document("Move layer up", |document| {
-                            document.move_layer(idx, idx + 1);
-                            true
-                        })
-                    {
-                        clear_layer_rename_draft(ctx);
-                        app.texture_dirty = true;
-                    }
-                }
-
-                let down_img =
-                    egui::Image::new(egui::include_image!("../../assets/icons/arrow-down.svg"))
-                        .tint(text_color)
-                        .fit_to_exact_size(icon_size);
-                if ui
-                    .add(egui::Button::image(down_img).min_size(button_size))
-                    .on_hover_text("Move Down")
-                    .clicked()
-                {
-                    let idx = app.editor.document().active_layer_index;
-                    if idx > 0
-                        && app.editor.mutate_document("Move layer down", |document| {
-                            document.move_layer(idx, idx - 1);
-                            true
-                        })
-                    {
-                        clear_layer_rename_draft(ctx);
-                        app.texture_dirty = true;
-                    }
-                }
-            });
-
-            ui.separator();
-            ui.add_space(8.0);
-
-            // Active layer properties
-            if layers_count > 0 {
-                let active = app.editor.document().active_layer_index;
-
-                ui.label("Opacity")
-                    .on_hover_text("Layer opacity (0 = transparent, 1 = opaque)");
-                let mut opacity = app.editor.document().layers[active].opacity;
-                if ui
-                    .add(egui::Slider::new(&mut opacity, 0.0..=1.0).fixed_decimals(2))
-                    .changed()
-                {
-                    app.editor.document_mut().layers[active].opacity = opacity;
-                    app.texture_dirty = true;
-                }
-
-                let mut locked = app.editor.document().layers[active].locked;
-                if ui
-                    .checkbox(&mut locked, "Lock layer")
-                    .on_hover_text("Prevent accidental edits to this layer")
-                    .changed()
-                    && app.editor.mutate_document("Lock layer", |document| {
-                        let Some(layer) = document.layers.get_mut(active) else {
-                            return false;
-                        };
-                        if layer.locked == locked {
-                            return false;
-                        };
-                        layer.locked = locked;
-                        true
-                    })
-                {
-                    app.texture_dirty = true;
-                }
-
-                ui.label("Blend Mode")
-                    .on_hover_text("How this layer's pixels combine with layers below");
-                let current_mode = app.editor.document().layers[active].blend_mode;
-                let mode_label = match current_mode {
-                    BlendMode::Normal => "Normal",
-                    BlendMode::Multiply => "Multiply",
-                    BlendMode::Screen => "Screen",
-                    BlendMode::Overlay => "Overlay",
-                };
-                egui::ComboBox::from_id_salt("blend_mode")
-                    .selected_text(mode_label)
-                    .show_ui(ui, |ui| {
-                        for (mode, label) in [
-                            (BlendMode::Normal, "Normal"),
-                            (BlendMode::Multiply, "Multiply"),
-                            (BlendMode::Screen, "Screen"),
-                            (BlendMode::Overlay, "Overlay"),
-                        ] {
-                            if ui.selectable_label(current_mode == mode, label).clicked()
-                                && app.editor.mutate_document("Change blend mode", |document| {
-                                    let Some(layer) = document.layers.get_mut(active) else {
-                                        return false;
-                                    };
-                                    if layer.blend_mode == mode {
-                                        return false;
-                                    }
-                                    layer.blend_mode = mode;
-                                    true
-                                })
-                            {
-                                app.texture_dirty = true;
-                            }
-                        }
-                    });
+            if !app.show_timeline {
+                show_layers(ctx, app, ui);
+                ui.add_space(12.0);
             }
 
             ui.add_space(12.0);
@@ -1236,4 +1142,117 @@ mod tests {
         let constrained_field = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(6.0, 8.0));
         assert_eq!(compact_picker_marker_radius(constrained_field), 3.0);
     }
+}
+
+pub(crate) fn draw_layer_row_ui(
+    ctx: &egui::Context,
+    app: &PixelBuddyApp,
+    ui: &mut egui::Ui,
+    i: usize,
+    active_idx: usize,
+    frame_index: usize,
+    visibility_changes: &mut Vec<(usize, bool)>,
+    rename_change: &mut Option<(usize, String)>,
+    new_active: &mut usize,
+) {
+    let is_active = i == active_idx;
+    let layer_name = app.editor.document().layers[i].name.clone();
+    let layer_visible = app.editor.document().layers[i].visible;
+    let rename_draft = ctx.data(|data| {
+        data.get_temp::<LayerRenameDraft>(layer_rename_draft_id())
+    });
+    let is_renaming = rename_draft.as_ref().is_some_and(|draft| {
+        draft.frame_index == frame_index
+            && draft.layer_index == i
+            && draft.original_name == layer_name
+    });
+
+    let mut frame = egui::Frame::NONE
+        .inner_margin(egui::Margin::same(4))
+        .corner_radius(4);
+
+    if is_active {
+        frame = frame.fill(ui.visuals().selection.bg_fill);
+    }
+
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            // Visibility toggle
+            if visibility_button(ui, layer_visible).clicked() {
+                visibility_changes.push((i, !layer_visible));
+            }
+
+            if is_renaming {
+                let mut draft = rename_draft
+                    .expect("rename state was checked immediately above");
+                let text_id = layer_rename_text_id(frame_index, i);
+                let response = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut draft.name)
+                            .id(text_id)
+                            .desired_width(ui.available_width())
+                            .text_color(egui::Color32::WHITE)
+                            .hint_text("Layer name"),
+                    )
+                    .on_hover_text("Rename layer");
+                let escape_pressed = response.has_focus()
+                    && ui.input(|input| input.key_pressed(egui::Key::Escape));
+                let should_commit = !escape_pressed
+                    && ((response.has_focus()
+                        && ui.input(|input| {
+                            input.key_pressed(egui::Key::Enter)
+                        }))
+                        || response.lost_focus());
+
+                if escape_pressed {
+                    clear_layer_rename_draft(ctx);
+                } else if should_commit {
+                    clear_layer_rename_draft(ctx);
+                    if draft.name != layer_name {
+                        *rename_change = Some((i, draft.name));
+                    }
+                } else {
+                    ctx.data_mut(|data| {
+                        data.insert_temp(layer_rename_draft_id(), draft)
+                    });
+                }
+            } else {
+                // Keep selection and renaming separate:
+                // click selects, double-click opens an inline editor.
+                let response = ui
+                    .selectable_label(
+                        is_active,
+                        egui::RichText::new(&layer_name).color(if is_active {
+                            egui::Color32::WHITE
+                        } else {
+                            ui.visuals().text_color()
+                        }),
+                    )
+                    .on_hover_text("Double-click to rename layer");
+                if response.clicked() {
+                    *new_active = i;
+                }
+                if response.double_clicked() {
+                    ctx.data_mut(|data| {
+                        data.insert_temp(
+                            layer_rename_draft_id(),
+                            LayerRenameDraft {
+                                frame_index,
+                                layer_index: i,
+                                original_name: layer_name.clone(),
+                                name: layer_name,
+                            },
+                        )
+                    });
+                    ui.memory_mut(|memory| {
+                        memory.request_focus(layer_rename_text_id(
+                            frame_index,
+                            i,
+                        ));
+                    });
+                    ctx.request_repaint();
+                }
+            }
+        });
+    });
 }
