@@ -375,7 +375,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             }
         }
         if app.show_guides {
-            let guide_stroke = Stroke::new(1.0, Color32::from_rgb(0, 255, 255));
+            let guide_stroke = Stroke::new(1.0_f32, Color32::from_rgb(0, 255, 255));
             let mut guide_to_remove = None;
             
             // Check if we are currently dragging a guide
@@ -472,7 +472,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     let tick_h = if is_major { top_rect.height() * 0.8 } else { top_rect.height() * 0.3 };
                     r_painter.line_segment(
                         [Pos2::new(x, top_rect.bottom() - tick_h), Pos2::new(x, top_rect.bottom())],
-                        Stroke::new(1.0, Color32::from_gray(100))
+                        Stroke::new(1.0_f32, Color32::from_gray(100))
                     );
                     if is_major {
                         r_painter.text(
@@ -500,7 +500,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 if let Some(pos) = ctx.pointer_latest_pos() {
                     r_painter.line_segment(
                         [Pos2::new(pos.x, top_rect.top()), Pos2::new(pos.x, top_rect.bottom())],
-                        Stroke::new(1.0, Color32::from_rgb(255, 100, 100))
+                        Stroke::new(1.0_f32, Color32::from_rgb(255, 100, 100))
                     );
                 }
             }
@@ -519,7 +519,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     let tick_w = if is_major { left_rect.width() * 0.8 } else { left_rect.width() * 0.3 };
                     r_painter.line_segment(
                         [Pos2::new(left_rect.right() - tick_w, y), Pos2::new(left_rect.right(), y)],
-                        Stroke::new(1.0, Color32::from_gray(100))
+                        Stroke::new(1.0_f32, Color32::from_gray(100))
                     );
                     if is_major {
                         r_painter.text(
@@ -547,7 +547,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 if let Some(pos) = ctx.pointer_latest_pos() {
                     r_painter.line_segment(
                         [Pos2::new(left_rect.left(), pos.y), Pos2::new(left_rect.right(), pos.y)],
-                        Stroke::new(1.0, Color32::from_rgb(255, 100, 100))
+                        Stroke::new(1.0_f32, Color32::from_rgb(255, 100, 100))
                     );
                 }
             }
