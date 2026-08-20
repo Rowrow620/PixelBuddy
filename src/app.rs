@@ -151,6 +151,13 @@ enum RasterExportSizing {
     Dimensions,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum SpriteSheetImportMode {
+    NewProject,
+    AppendFrames,
+    ActiveLayer,
+}
+
 pub struct PixelBuddyApp {
     pub editor: EditorState,
     pub zoom: f32,
@@ -203,7 +210,7 @@ pub struct PixelBuddyApp {
     show_close_confirmation: bool,
     allow_close: bool,
     pub show_spritesheet_import_dialog: bool,
-    pub spritesheet_import_as_new_project: bool,
+    pub spritesheet_import_mode: SpriteSheetImportMode,
     pub spritesheet_import_data: Option<(Vec<u8>, String)>,
     pub spritesheet_import_texture: Option<egui::TextureHandle>,
     pub spritesheet_import_columns: String,
@@ -267,7 +274,7 @@ impl PixelBuddyApp {
             show_close_confirmation: false,
             allow_close: false,
             show_spritesheet_import_dialog: false,
-            spritesheet_import_as_new_project: true,
+            spritesheet_import_mode: SpriteSheetImportMode::NewProject,
             spritesheet_import_data: None,
             spritesheet_import_texture: None,
             spritesheet_import_columns: "1".to_string(),
@@ -1155,6 +1162,12 @@ impl PixelBuddyApp {
                     ui.text_edit_singleline(&mut self.spritesheet_import_rows);
                 });
 
+                ui.add_space(8.0);
+                ui.label("Import Mode:");
+                ui.radio_value(&mut self.spritesheet_import_mode, SpriteSheetImportMode::NewProject, "New Project");
+                ui.radio_value(&mut self.spritesheet_import_mode, SpriteSheetImportMode::AppendFrames, "Append as New Frames");
+                ui.radio_value(&mut self.spritesheet_import_mode, SpriteSheetImportMode::ActiveLayer, "Import into Active Layer");
+
                 if let Some(err) = &self.spritesheet_import_error {
                     ui.add_space(8.0);
                     ui.colored_label(egui::Color32::from_rgb(248, 113, 113), err);
@@ -1192,35 +1205,75 @@ impl PixelBuddyApp {
                         self.show_spritesheet_import_dialog = false;
                         self.spritesheet_import_error = None;
                         
-                        if self.spritesheet_import_as_new_project {
-                            self.show_timeline = true;
-                            self.request_replacement(PendingReplacement::ImportedAnimation {
-                                animation,
-                                file_name,
-                            });
-                        } else {
-                            let doc_width = self.editor.document().width;
-                            let doc_height = self.editor.document().height;
-                            
-                            // Check if dimensions match
-                            let first_frame = &animation.frames[0];
-                            if first_frame.document.width != doc_width || first_frame.document.height != doc_height {
-                                self.spritesheet_import_error = Some(format!(
-                                    "Spritesheet frames are {}x{}, but current document is {}x{}. Dimensions must match exactly to import as frames.",
-                                    first_frame.document.width, first_frame.document.height, doc_width, doc_height
-                                ));
-                                self.spritesheet_import_data = Some((data, file_name));
-                                self.show_spritesheet_import_dialog = true;
-                                return;
+                        match self.spritesheet_import_mode {
+                            SpriteSheetImportMode::NewProject => {
+                                self.show_timeline = true;
+                                self.request_replacement(PendingReplacement::ImportedAnimation {
+                                    animation,
+                                    file_name,
+                                });
                             }
-                            
-                            // Append frames
-                            for frame in animation.frames {
-                                self.editor.animation.frames.push(frame);
+                            SpriteSheetImportMode::AppendFrames => {
+                                let doc_width = self.editor.document().width;
+                                let doc_height = self.editor.document().height;
+                                
+                                let first_frame = &animation.frames[0];
+                                if first_frame.document.width != doc_width || first_frame.document.height != doc_height {
+                                    self.spritesheet_import_error = Some(format!(
+                                        "Spritesheet frames are {}x{}, but current document is {}x{}. Dimensions must match exactly to import as frames.",
+                                        first_frame.document.width, first_frame.document.height, doc_width, doc_height
+                                    ));
+                                    self.spritesheet_import_data = Some((data, file_name));
+                                    self.show_spritesheet_import_dialog = true;
+                                    return;
+                                }
+                                
+                                for frame in animation.frames {
+                                    self.editor.animation.frames.push(frame);
+                                }
+                                self.texture_dirty = true;
+                                self.editor.mark_dirty();
+                                self.status_message = Some(("Appended sprite sheet frames".to_string(), false));
                             }
-                            self.texture_dirty = true;
-                            self.editor.mark_dirty();
-                            self.status_message = Some(("Imported sprite sheet frames".to_string(), false));
+                            SpriteSheetImportMode::ActiveLayer => {
+                                let doc_width = self.editor.document().width;
+                                let doc_height = self.editor.document().height;
+                                
+                                let first_frame = &animation.frames[0];
+                                if first_frame.document.width != doc_width || first_frame.document.height != doc_height {
+                                    self.spritesheet_import_error = Some(format!(
+                                        "Spritesheet frames are {}x{}, but current document is {}x{}. Dimensions must match exactly.",
+                                        first_frame.document.width, first_frame.document.height, doc_width, doc_height
+                                    ));
+                                    self.spritesheet_import_data = Some((data, file_name));
+                                    self.show_spritesheet_import_dialog = true;
+                                    return;
+                                }
+                                
+                                let active_idx = self.editor.document().active_layer_index;
+                                
+                                for (i, imported_frame) in animation.frames.into_iter().enumerate() {
+                                    if i < self.editor.animation.frames.len() {
+                                        let target_frame = &mut self.editor.animation.frames[i];
+                                        if active_idx < target_frame.document.layers.len() && !imported_frame.document.layers.is_empty() {
+                                            let src_layer = &imported_frame.document.layers[0];
+                                            let dst_layer = &mut target_frame.document.layers[active_idx];
+                                            for y in 0..doc_height {
+                                                for x in 0..doc_width {
+                                                    let p = src_layer.canvas.get_pixel(x, y);
+                                                    if p[3] > 0 { // blend over
+                                                        dst_layer.canvas.blend_pixel(x, y, p);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                self.texture_dirty = true;
+                                self.editor.history.clear(); // invalidate cross-frame
+                                self.editor.mark_dirty();
+                                self.status_message = Some(("Imported sprite sheet into active layer".to_string(), false));
+                            }
                         }
                     }
                     Err(e) => {
@@ -1711,7 +1764,7 @@ impl eframe::App for PixelBuddyApp {
                 }
                 FileAction::OpenedSpriteSheet { data, file_name, as_new_project } => {
                     self.show_spritesheet_import_dialog = true;
-                    self.spritesheet_import_as_new_project = as_new_project;
+                    self.spritesheet_import_mode = if as_new_project { SpriteSheetImportMode::NewProject } else { SpriteSheetImportMode::AppendFrames };
                     self.spritesheet_import_columns = "1".to_string();
                     self.spritesheet_import_rows = "1".to_string();
                     self.spritesheet_import_error = None;

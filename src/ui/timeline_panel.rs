@@ -122,7 +122,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             ui.separator();
 
             // GRID LAYOUT
-            let header_height = 42.0;
+            let header_height = 50.0;
             let row_height = 32.0;
             let frame_count = app.editor.animation.frames.len();
             let current_frame = app.editor.animation.current_frame_index;
@@ -131,6 +131,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
 
             egui::ScrollArea::vertical().id_salt("timeline_vscroll").show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                     // LEFT COLUMN (Layers)
                     ui.vertical(|ui| {
                         ui.set_width(220.0);
@@ -193,65 +194,69 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     // RIGHT COLUMN (Frames)
                     egui::ScrollArea::horizontal().id_salt("timeline_hscroll").show(ui, |ui| {
                         ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                             // Frame headers (Thumbnail + Number)
                             let tags_rect_start = ui.cursor().min;
-                            ui.add_space(18.0); // Space for tags
                             
                             let mut frame_rects = Vec::new();
 
-                            ui.horizontal(|ui| {
-                                for f in 0..frame_count {
-                                    let is_active = f == current_frame;
-                                    let label = format!("Frame {}", f + 1);
-
-                                    let (frame_response, rect) = ui.vertical(|ui| {
-                                        ui.set_width(32.0);
-                                        let frame_response = if let Some(Some(thumb)) = app.frame_thumbnails.get(f) {
-                                            let btn = egui::ImageButton::new(
-                                                egui::Image::new(thumb)
-                                                    .fit_to_exact_size(egui::vec2(32.0, 32.0))
-                                                    .maintain_aspect_ratio(true)
-                                            );
-                                            let r = ui.add(btn.sense(egui::Sense::click_and_drag())).on_hover_text(&label);
-                                            if is_active {
-                                                ui.painter().rect_stroke(r.rect, 2.0, egui::Stroke::new(2.0_f32, ui.visuals().selection.bg_fill), egui::StrokeKind::Inside);
-                                            }
-                                            r
-                                        } else {
-                                            let mut btn = egui::Button::new(egui::RichText::new(&label).size(11.0)).min_size(egui::vec2(32.0, 32.0));
-                                            if is_active {
-                                                btn = btn.stroke(egui::Stroke::new(2.0_f32, ui.visuals().selection.bg_fill));
-                                            }
-                                            ui.add(btn.sense(egui::Sense::click_and_drag())).on_hover_text(&label)
-                                        };
-
-                                        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                                            ui.label(egui::RichText::new(format!("{}", f + 1)).size(10.0).color(egui::Color32::from_gray(140)));
-                                        });
-
-                                        (frame_response.clone(), frame_response.rect)
-                                    }).inner;
-                                    
-                                    frame_rects.push(rect);
-
-                                    // Tags context menu and DND logic would go here
-                                    frame_response.context_menu(|ui| {
-                                        if ui.button("Create Tag").clicked() {
-                                            app.editor.animation.tags.push(crate::document::animation::FrameTag {
-                                                name: "New Tag".to_owned(),
-                                                color: [0.8, 0.2, 0.2],
-                                                from_frame: f,
-                                                to_frame: f,
+                            ui.allocate_ui(egui::vec2(frame_count as f32 * 32.0, header_height), |ui| {
+                                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                                    ui.horizontal(|ui| {
+                                        for f in 0..frame_count {
+                                            let is_active = f == current_frame;
+                                            let label = format!("Frame {}", f + 1);
+        
+                                            let (frame_response, rect) = ui.vertical(|ui| {
+                                                ui.set_width(32.0);
+                                                let frame_response = if let Some(Some(thumb)) = app.frame_thumbnails.get(f) {
+                                                    let btn = egui::ImageButton::new(
+                                                        egui::Image::new(thumb)
+                                                            .fit_to_exact_size(egui::vec2(32.0, 32.0))
+                                                            .maintain_aspect_ratio(true)
+                                                    );
+                                                    let r = ui.add(btn.sense(egui::Sense::click_and_drag())).on_hover_text(&label);
+                                                    if is_active {
+                                                        ui.painter().rect_stroke(r.rect, 2.0, egui::Stroke::new(2.0_f32, ui.visuals().selection.bg_fill), egui::StrokeKind::Inside);
+                                                    }
+                                                    r
+                                                } else {
+                                                    let mut btn = egui::Button::new(egui::RichText::new(&label).size(11.0)).min_size(egui::vec2(32.0, 32.0));
+                                                    if is_active {
+                                                        btn = btn.stroke(egui::Stroke::new(2.0_f32, ui.visuals().selection.bg_fill));
+                                                    }
+                                                    ui.add(btn.sense(egui::Sense::click_and_drag())).on_hover_text(&label)
+                                                };
+        
+                                                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                    ui.label(egui::RichText::new(format!("{}", f + 1)).size(10.0).color(egui::Color32::from_gray(140)));
+                                                });
+        
+                                                (frame_response.clone(), frame_response.rect)
+                                            }).inner;
+                                            
+                                            frame_rects.push(rect);
+        
+                                            // Tags context menu and DND logic would go here
+                                            frame_response.context_menu(|ui| {
+                                                if ui.button("Create Tag").clicked() {
+                                                    app.editor.animation.tags.push(crate::document::animation::FrameTag {
+                                                        name: "New Tag".to_owned(),
+                                                        color: [0.8, 0.2, 0.2],
+                                                        from_frame: f,
+                                                        to_frame: f,
+                                                    });
+                                                    ui.close_menu();
+                                                }
                                             });
-                                            ui.close_menu();
+        
+                                            // Just select for now if clicked
+                                            if frame_response.clicked() {
+                                                frame_selection = Some(f);
+                                            }
                                         }
                                     });
-
-                                    // Just select for now if clicked
-                                    if frame_response.clicked() {
-                                        frame_selection = Some(f);
-                                    }
-                                }
+                                });
                             });
 
                             // Render Tags
