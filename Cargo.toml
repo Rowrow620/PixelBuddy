@@ -9,7 +9,7 @@ description = "A pixel art editor built in Rust"
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
 egui = "0.31"
 egui_extras = { version = "0.31", features = ["image", "svg"] }
-image = { version = "0.25", default-features = false, features = ["png", "gif"] }
+image = { version = "0.25", default-features = false, features = ["png", "gif", "webp"] }
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 ron = "0.8"

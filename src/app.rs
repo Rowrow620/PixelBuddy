@@ -73,14 +73,18 @@ enum RasterExportKind {
     Png,
     Gif,
     SpriteSheetPng,
+    WebP,
 }
 
 impl RasterExportKind {
+
+
     const fn dialog_title(self) -> &'static str {
         match self {
             Self::Png => "Export PNG",
             Self::Gif => "Export Animated GIF",
             Self::SpriteSheetPng => "Export Sprite Sheet",
+            Self::WebP => "Export WebP",
         }
     }
 
@@ -89,6 +93,7 @@ impl RasterExportKind {
             Self::Png => "Export PNG",
             Self::Gif => "Export GIF",
             Self::SpriteSheetPng => "Export Sprite Sheet",
+            Self::WebP => "Export WebP",
         }
     }
 
@@ -97,12 +102,13 @@ impl RasterExportKind {
             Self::Png => "Exports the active frame as a flattened PNG image.",
             Self::Gif => "Exports every animation frame while keeping its current timing.",
             Self::SpriteSheetPng => "Places every animation frame left to right in one PNG image.",
+            Self::WebP => "Exports the active frame as a flattened WebP image.",
         }
     }
 
     /// Returns the raster dimensions after nearest-neighbor integer scaling.
     /// A sprite sheet is one horizontal row, so its unscaled width also
-    /// includes every animation frame.
+    /// multiplies by the frame count.
     fn output_dimensions(
         self,
         frame_width: u32,
@@ -115,7 +121,7 @@ impl RasterExportKind {
         }
 
         let width = match self {
-            Self::Png | Self::Gif => frame_width,
+            Self::Png | Self::Gif | Self::WebP => frame_width,
             Self::SpriteSheetPng => frame_width.checked_mul(u32::try_from(frame_count).ok()?)?,
         };
 
@@ -340,6 +346,10 @@ impl PixelBuddyApp {
     /// The project document remains untouched until the user confirms export.
     pub fn open_png_export_dialog(&mut self) {
         self.open_raster_export_dialog(RasterExportKind::Png);
+    }
+
+    pub fn open_webp_export_dialog(&mut self) {
+        self.open_raster_export_dialog(RasterExportKind::WebP);
     }
 
     /// Opens the shared nearest-neighbor scale chooser for the animation GIF.
@@ -1029,7 +1039,7 @@ impl PixelBuddyApp {
     /// the time of export.
     fn raster_export_source_dimensions(&self, kind: RasterExportKind) -> Option<(u32, u32, usize)> {
         match kind {
-            RasterExportKind::Png => {
+            RasterExportKind::Png | RasterExportKind::WebP => {
                 let document = self.editor.document();
                 Some((document.width, document.height, 1))
             }
@@ -1059,6 +1069,11 @@ impl PixelBuddyApp {
                 width,
                 height,
             ),
+            RasterExportKind::WebP => crate::io::webp::export_document_to_webp_at_dimensions(
+                self.editor.document(),
+                width,
+                height,
+            ),
             RasterExportKind::Gif => crate::io::gif::export_animation_to_gif_at_dimensions(
                 &self.editor.animation,
                 width,
@@ -1076,6 +1091,7 @@ impl PixelBuddyApp {
 
         let request = match kind {
             RasterExportKind::Png => crate::io::ExportRequest::png(encoded),
+            RasterExportKind::WebP => crate::io::ExportRequest::webp(encoded),
             RasterExportKind::Gif => crate::io::ExportRequest::gif(encoded),
             RasterExportKind::SpriteSheetPng => crate::io::ExportRequest::sprite_sheet_png(encoded),
         };
@@ -1122,7 +1138,7 @@ impl PixelBuddyApp {
 
                     if let Some((frame_width, frame_height, frame_count)) = source_dimensions {
                         match kind {
-                            RasterExportKind::Png => {
+                            RasterExportKind::Png | RasterExportKind::WebP => {
                                 ui.label(format!("Source: {frame_width} × {frame_height} px"));
                             }
                             RasterExportKind::Gif => {
@@ -1453,12 +1469,18 @@ impl eframe::App for PixelBuddyApp {
         while let Ok(action) = self.io_handler.receiver.try_recv() {
             match action {
                 FileAction::OpenedImage { data, file_name } => {
-                    match crate::io::png::import_png_to_document(&data) {
+                    let result = if file_name.to_lowercase().ends_with(".webp") {
+                        crate::io::webp::import_webp_to_document(&data)
+                    } else {
+                        crate::io::png::import_png_to_document(&data)
+                    };
+                    
+                    match result {
                         Ok(doc) => {
                             self.request_imported_image(doc, file_name);
                         }
                         Err(error) => {
-                            log::error!("Unable to open PNG: {error}");
+                            log::error!("Unable to open image: {error}");
                             self.status_message = Some((error.to_string(), true));
                         }
                     }
