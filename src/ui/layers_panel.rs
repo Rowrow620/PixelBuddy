@@ -7,19 +7,23 @@ use egui::{
 };
 
 const PALETTE_SWATCH_SIZE: f32 = 22.0;
+const SIDEBAR_DEFAULT_WIDTH: f32 = 240.0;
+const SIDEBAR_MIN_WIDTH: f32 = 220.0;
+const SIDEBAR_MAX_WIDTH: f32 = 320.0;
 // The stock 275px picker dominates the sidebar. 100px keeps the full
 // saturation/value field usable for pixel art while leaving the palette and
 // undo history readable behind its temporary popup.
-const COMPACT_COLOR_PICKER_SLIDER_WIDTH: f32 = 100.0;
+const COMPACT_COLOR_PICKER_SLIDER_WIDTH: f32 = 256.0;
 const COMPACT_COLOR_PICKER_MARKER_RADIUS: f32 = 5.0;
 const COLOR_PICKER_GRADIENT_STEPS: u32 = 6 * 6;
 
 /// Retains the hue while the selected color is gray, matching the behavior of
 /// egui's built-in picker without persisting UI state into a PixelBuddy file.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct CompactPickerColorState {
     color: Color32,
     hsvag: HsvaGamma,
+    hex_text: String,
 }
 
 fn compact_picker_color_state_id() -> egui::Id {
@@ -70,14 +74,33 @@ fn compact_gamma_color_inputs(ui: &mut egui::Ui, hsvag: &mut HsvaGamma) -> bool 
             ui.ctx().copy_text(format!("{r}, {g}, {b}"));
         }
 
+        let drag_width = 40.0;
         edited |= ui
-            .add(egui::DragValue::new(&mut srgba[0]).speed(0.5).prefix("R "))
+            .add_sized(
+                [drag_width, ui.spacing().interact_size.y],
+                egui::DragValue::new(&mut srgba[0])
+                    .speed(0.5)
+                    .prefix("R ")
+                    .range(0.0..=255.0),
+            )
             .changed();
         edited |= ui
-            .add(egui::DragValue::new(&mut srgba[1]).speed(0.5).prefix("G "))
+            .add_sized(
+                [drag_width, ui.spacing().interact_size.y],
+                egui::DragValue::new(&mut srgba[1])
+                    .speed(0.5)
+                    .prefix("G ")
+                    .range(0.0..=255.0),
+            )
             .changed();
         edited |= ui
-            .add(egui::DragValue::new(&mut srgba[2]).speed(0.5).prefix("B "))
+            .add_sized(
+                [drag_width, ui.spacing().interact_size.y],
+                egui::DragValue::new(&mut srgba[2])
+                    .speed(0.5)
+                    .prefix("B ")
+                    .range(0.0..=255.0),
+            )
             .changed();
     });
 
@@ -104,8 +127,10 @@ fn compact_linear_color_inputs(ui: &mut egui::Ui, hsvag: &mut HsvaGamma) -> bool
             ui.ctx().copy_text(format!("{r:.03}, {g:.03}, {b:.03}"));
         }
 
+        let drag_width = 50.0;
         edited |= ui
-            .add(
+            .add_sized(
+                [drag_width, ui.spacing().interact_size.y],
                 egui::DragValue::new(&mut rgba[0])
                     .speed(0.003)
                     .range(0.0..=1.0)
@@ -114,7 +139,8 @@ fn compact_linear_color_inputs(ui: &mut egui::Ui, hsvag: &mut HsvaGamma) -> bool
             )
             .changed();
         edited |= ui
-            .add(
+            .add_sized(
+                [drag_width, ui.spacing().interact_size.y],
                 egui::DragValue::new(&mut rgba[1])
                     .speed(0.003)
                     .range(0.0..=1.0)
@@ -123,7 +149,8 @@ fn compact_linear_color_inputs(ui: &mut egui::Ui, hsvag: &mut HsvaGamma) -> bool
             )
             .changed();
         edited |= ui
-            .add(
+            .add_sized(
+                [drag_width, ui.spacing().interact_size.y],
                 egui::DragValue::new(&mut rgba[2])
                     .speed(0.003)
                     .range(0.0..=1.0)
@@ -271,13 +298,29 @@ fn compact_hue_picker(
 fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool {
     let original_color = *color;
     let state_id = compact_picker_color_state_id();
-    let mut hsvag = ui
-        .data(|data| data.get_temp::<CompactPickerColorState>(state_id))
-        .filter(|state| state.color == original_color)
-        .map(|state| state.hsvag)
-        .unwrap_or_else(|| HsvaGamma::from(original_color));
 
-    compact_color_inputs(ui, &mut hsvag);
+    let mut state = ui
+        .data(|data| data.get_temp::<CompactPickerColorState>(state_id))
+        .filter(|s| s.color == original_color)
+        .unwrap_or_else(|| CompactPickerColorState {
+            color: original_color,
+            hsvag: HsvaGamma::from(original_color),
+            hex_text: format!(
+                "{:02x}{:02x}{:02x}",
+                original_color.r(),
+                original_color.g(),
+                original_color.b()
+            ),
+        });
+
+    let mut hsvag = state.hsvag;
+    let mut hex_changed = false;
+    let mut external_hsv_changed = false;
+
+    // Draw RGB inputs first
+    ui.horizontal(|ui| {
+        external_hsv_changed |= compact_color_inputs(ui, &mut hsvag);
+    });
 
     let selected_color_size = egui::vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
     egui::color_picker::show_color(ui, Color32::from(hsvag), selected_color_size)
@@ -299,8 +342,7 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
             ..opaque
         }
         .into()
-    })
-    .on_hover_text("Saturation and value");
+    }); // No tooltip as requested
 
     compact_hue_picker(ui, h, |hue| {
         HsvaGamma {
@@ -313,13 +355,60 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
     })
     .on_hover_text("Hue");
 
+    // Draw Hex field below the Hue picker
+    ui.horizontal(|ui| {
+        ui.label("#");
+        let hex_response = ui.add_sized(
+            [50.0, ui.spacing().interact_size.y],
+            egui::TextEdit::singleline(&mut state.hex_text)
+                .desired_width(50.0)
+                .margin(egui::vec2(4.0, 2.0)),
+        );
+
+        if hex_response.changed() {
+            hex_changed = true;
+        }
+
+        // Validate hex length
+        let trimmed = state.hex_text.trim_start_matches('#');
+        if trimmed.len() == 6 {
+            if let Ok(parsed) = u32::from_str_radix(trimmed, 16) {
+                if hex_changed {
+                    let r = ((parsed >> 16) & 0xFF) as u8;
+                    let g = ((parsed >> 8) & 0xFF) as u8;
+                    let b = (parsed & 0xFF) as u8;
+                    let new_c = Color32::from_rgb(r, g, b);
+                    hsvag = HsvaGamma::from(new_c);
+                    external_hsv_changed = true;
+                }
+            } else {
+                ui.label(egui::RichText::new("⚠").color(Color32::RED));
+            }
+        } else if trimmed.len() > 6
+            || (trimmed.len() > 0 && trimmed.len() < 6 && !hex_response.has_focus())
+        {
+            ui.label(egui::RichText::new("⚠").color(Color32::RED));
+        }
+    });
+
     let updated_color = Color32::from(hsvag);
+
+    if updated_color != original_color {
+        state.hex_text = format!(
+            "{:02x}{:02x}{:02x}",
+            updated_color.r(),
+            updated_color.g(),
+            updated_color.b()
+        );
+    }
+
     ui.data_mut(|data| {
         data.insert_temp(
             state_id,
             CompactPickerColorState {
                 color: updated_color,
                 hsvag,
+                hex_text: state.hex_text.clone(),
             },
         );
     });
@@ -365,10 +454,22 @@ fn compact_primary_color_picker(ui: &mut egui::Ui, color: &mut Color32) -> egui:
     }
 
     if ui.memory(|memory| memory.is_popup_open(popup_id)) {
+        let mut pos = response.rect.max;
+        let screen_rect = ui.ctx().screen_rect();
+        let expected_width = COMPACT_COLOR_PICKER_SLIDER_WIDTH + 20.0;
+        let expected_height = COMPACT_COLOR_PICKER_SLIDER_WIDTH + 80.0;
+
+        if pos.x + expected_width > screen_rect.right() {
+            pos.x = screen_rect.right() - expected_width;
+        }
+        if pos.y + expected_height > screen_rect.bottom() {
+            pos.y = response.rect.top() - expected_height;
+        }
+
         let popup_response = egui::Area::new(popup_id)
             .kind(egui::UiKind::Picker)
             .order(egui::Order::Foreground)
-            .fixed_pos(response.rect.max)
+            .fixed_pos(pos)
             .show(ui.ctx(), |popup_ui| {
                 popup_ui.spacing_mut().slider_width = COMPACT_COLOR_PICKER_SLIDER_WIDTH;
                 egui::Frame::popup(ui.style()).show(popup_ui, |popup_ui| {
@@ -540,7 +641,7 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
     let layers_count = app.editor.document().layers.len();
     let active_idx = app.editor.document().active_layer_index;
     let frame_index = app.editor.animation.current_frame_index;
-    let mut new_active = active_idx;
+    let mut new_active = None;
     let mut visibility_changes: Vec<(usize, bool)> = Vec::new();
     let mut rename_change: Option<(usize, String)> = None;
 
@@ -573,12 +674,14 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
                     ctx,
                     app,
                     ui,
-                    i,
-                    active_idx,
-                    frame_index,
-                    &mut visibility_changes,
-                    &mut rename_change,
-                    &mut new_active,
+                    LayerRowUi {
+                        layer_index: i,
+                        active_layer_index: active_idx,
+                        frame_index: frame_index,
+                        visibility_changes: &mut visibility_changes,
+                        rename_change: &mut rename_change,
+                        new_active: &mut new_active,
+                    },
                 );
             }
         });
@@ -618,8 +721,8 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
     }
 
     // Apply active layer selection
-    if new_active != active_idx {
-        app.editor.document_mut().active_layer_index = new_active;
+    if let Some(index) = new_active {
+        app.editor.document_mut().active_layer_index = index;
     }
 
     ui.separator();
@@ -638,23 +741,14 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
             .on_hover_text("Add Layer")
             .clicked()
         {
-            let name = format!("Layer {}", layers_count + 1);
-            let width = app.editor.document().width;
-            let height = app.editor.document().height;
-            for frame in &mut app.editor.animation.frames {
-                frame.document.layers.push(crate::document::Layer::new(name.clone(), width, height));
+            if app.add_layer_all_frames() {
+                clear_layer_rename_draft(ctx);
             }
-            app.editor.document_mut().active_layer_index = layers_count;
-            app.editor.history.clear();
-            
-            clear_layer_rename_draft(ctx);
-            app.texture_dirty = true;
         }
 
-        let del_img =
-            egui::Image::new(egui::include_image!("../../assets/icons/trash.svg"))
-                .tint(text_color)
-                .fit_to_exact_size(icon_size);
+        let del_img = egui::Image::new(egui::include_image!("../../assets/icons/trash.svg"))
+            .tint(text_color)
+            .fit_to_exact_size(icon_size);
         if ui
             .add_enabled(
                 layers_count > 1,
@@ -663,19 +757,8 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
             .on_hover_text("Delete Layer")
             .clicked()
         {
-            let active_layer = app.editor.document().active_layer_index;
-            if layers_count > 1 {
-                for frame in &mut app.editor.animation.frames {
-                    if frame.document.layers.len() > active_layer {
-                        frame.document.layers.remove(active_layer);
-                        if frame.document.active_layer_index >= frame.document.layers.len() {
-                            frame.document.active_layer_index = frame.document.layers.len().saturating_sub(1);
-                        }
-                    }
-                }
-                app.editor.history.clear();
+            if layers_count > 1 && app.remove_active_layer_all_frames() {
                 clear_layer_rename_draft(ctx);
-                app.texture_dirty = true;
             }
         }
 
@@ -687,59 +770,36 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
             .on_hover_text("Duplicate Layer")
             .clicked()
         {
-            let active_layer = app.editor.document().active_layer_index;
-            for frame in &mut app.editor.animation.frames {
-                if active_layer < frame.document.layers.len() {
-                    let mut cloned = frame.document.layers[active_layer].clone();
-                    cloned.name = format!("{} copy", cloned.name);
-                    frame.document.layers.insert(active_layer + 1, cloned);
-                }
+            if app.duplicate_active_layer_all_frames() {
+                clear_layer_rename_draft(ctx);
             }
-            app.editor.document_mut().active_layer_index = active_layer + 1;
-            app.editor.history.clear();
-            clear_layer_rename_draft(ctx);
-            app.texture_dirty = true;
         }
 
-        let up_img =
-            egui::Image::new(egui::include_image!("../../assets/icons/arrow-up.svg"))
-                .tint(text_color)
-                .fit_to_exact_size(icon_size);
+        let up_img = egui::Image::new(egui::include_image!("../../assets/icons/arrow-up.svg"))
+            .tint(text_color)
+            .fit_to_exact_size(icon_size);
         if ui
             .add(egui::Button::image(up_img).min_size(button_size))
             .on_hover_text("Move Up")
             .clicked()
         {
             let idx = app.editor.document().active_layer_index;
-            if idx + 1 < layers_count
-                && app.editor.mutate_document("Move layer up", |document| {
-                    document.move_layer(idx, idx + 1);
-                    true
-                })
-            {
+            if idx + 1 < layers_count && app.move_layer_current_frame(idx, idx + 1) {
                 clear_layer_rename_draft(ctx);
-                app.texture_dirty = true;
             }
         }
 
-        let down_img =
-            egui::Image::new(egui::include_image!("../../assets/icons/arrow-down.svg"))
-                .tint(text_color)
-                .fit_to_exact_size(icon_size);
+        let down_img = egui::Image::new(egui::include_image!("../../assets/icons/arrow-down.svg"))
+            .tint(text_color)
+            .fit_to_exact_size(icon_size);
         if ui
             .add(egui::Button::image(down_img).min_size(button_size))
             .on_hover_text("Move Down")
             .clicked()
         {
             let idx = app.editor.document().active_layer_index;
-            if idx > 0
-                && app.editor.mutate_document("Move layer down", |document| {
-                    document.move_layer(idx, idx - 1);
-                    true
-                })
-            {
+            if idx > 0 && app.move_layer_current_frame(idx, idx - 1) {
                 clear_layer_rename_draft(ctx);
-                app.texture_dirty = true;
             }
         }
     });
@@ -758,8 +818,7 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
             .add(egui::Slider::new(&mut opacity, 0.0..=1.0).fixed_decimals(2))
             .changed()
         {
-            app.editor.document_mut().layers[active].opacity = opacity;
-            app.texture_dirty = true;
+            app.set_layer_opacity_current_frame(active, opacity);
         }
 
         let mut locked = app.editor.document().layers[active].locked;
@@ -767,22 +826,19 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
             .checkbox(&mut locked, "Lock layer")
             .on_hover_text("Prevent accidental edits to this layer")
             .clicked()
-            && app.editor.mutate_document("Lock layer", |document| {
-                let Some(layer) = document.layers.get_mut(active) else {
-                    return false;
-                };
-                if layer.locked == locked {
-                    return false;
-                }
-                layer.locked = locked;
-                true
-            })
-        {
-            app.texture_dirty = true;
+            && app.set_layer_locked_current_frame(active, locked) {
         }
 
-        egui::ComboBox::from_label("Blend mode")
-            .selected_text(format!("{:?}", app.editor.document().layers[active].blend_mode))
+        // Keep the label above the selector. `ComboBox::from_label` lays both
+        // widgets out on one intrinsic-width row, which can extend beyond a
+        // narrow or DPI-scaled sidebar and be clipped at the window edge.
+        ui.label("Blend mode");
+        egui::ComboBox::from_id_salt("active_layer_blend_mode")
+            .width(ui.available_width())
+            .selected_text(format!(
+                "{:?}",
+                app.editor.document().layers[active].blend_mode
+            ))
             .show_ui(ui, |ui| {
                 for mode in &[
                     BlendMode::Normal,
@@ -790,16 +846,9 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
                     BlendMode::Screen,
                     BlendMode::Overlay,
                 ] {
-                    if ui
-                        .selectable_value(
-                            &mut app.editor.document_mut().layers[active].blend_mode,
-                            *mode,
-                            format!("{:?}", mode),
-                        )
-                        .changed()
-                    {
-                        app.editor.mark_dirty();
-                        app.texture_dirty = true;
+                    let mut mode_var = app.editor.document().layers[active].blend_mode;
+                    if ui.selectable_value(&mut mode_var, *mode, format!("{:?}", mode)).changed() {
+                        app.set_layer_blend_mode_current_frame(active, *mode);
                     }
                 }
             });
@@ -808,7 +857,13 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
 
 pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     egui::SidePanel::right("layers_panel")
-        .exact_width(200.0)
+        // Give property controls enough room by default while still allowing
+        // users to trade sidebar space for canvas space. Child controls must
+        // remain responsive because DPI scaling can reduce effective width.
+        .default_width(SIDEBAR_DEFAULT_WIDTH)
+        .min_width(SIDEBAR_MIN_WIDTH)
+        .max_width(SIDEBAR_MAX_WIDTH)
+        .resizable(true)
         .show_separator_line(false)
         .show(ctx, |ui| {
             if !app.show_timeline {
@@ -886,7 +941,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                 );
 
                                 if response.clicked() {
-                                    app.editor.document_mut().palette.set_selected(i);
+                                    app.select_palette_color_current_frame(i);
                                     app.editor.set_primary_color(color);
                                 }
                                 response.context_menu(|ui| {
@@ -999,24 +1054,10 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         app.editor.set_secondary_color(color);
                     }
                     PaletteAction::Move { from, to } => {
-                        if app
-                            .editor
-                            .mutate_document("Move palette color", |document| {
-                                document.palette.move_color(from, to)
-                            })
-                        {
-                            app.texture_dirty = true;
-                        }
+                        app.move_palette_color_current_frame(from, to);
                     }
                     PaletteAction::Remove { index } => {
-                        if app
-                            .editor
-                            .mutate_document("Remove palette color", |document| {
-                                document.palette.remove_color(index)
-                            })
-                        {
-                            app.texture_dirty = true;
-                        }
+                        app.remove_palette_color_current_frame(index);
                     }
                 }
             }
@@ -1028,12 +1069,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 .clicked()
             {
                 let primary_color = app.editor.primary_color;
-                if app.editor.mutate_document("Add palette color", |document| {
-                    document.palette.add_color(primary_color);
-                    true
-                }) {
-                    app.texture_dirty = true;
-                }
+                app.add_palette_color_current_frame(primary_color);
             }
 
             ui.add_space(12.0);
@@ -1070,9 +1106,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                         .selectable_label(is_latest, label)
                                         .on_hover_text("Click to jump to this point in history")
                                         .clicked()
-                                        && app.editor.jump_to_undo_index(idx)
-                                    {
-                                        app.texture_dirty = true;
+                                        && app.jump_to_undo_index_current_frame(idx) {
                                     }
                                 }
 
@@ -1153,23 +1187,33 @@ mod tests {
     }
 }
 
+pub struct LayerRowUi<'a> {
+    pub layer_index: usize,
+    pub active_layer_index: usize,
+    pub frame_index: usize,
+    pub visibility_changes: &'a mut Vec<(usize, bool)>,
+    pub rename_change: &'a mut Option<(usize, String)>,
+    pub new_active: &'a mut Option<usize>,
+}
+
 pub(crate) fn draw_layer_row_ui(
     ctx: &egui::Context,
     app: &PixelBuddyApp,
     ui: &mut egui::Ui,
-    i: usize,
-    active_idx: usize,
-    frame_index: usize,
-    visibility_changes: &mut Vec<(usize, bool)>,
-    rename_change: &mut Option<(usize, String)>,
-    new_active: &mut usize,
+    args: LayerRowUi<'_>,
 ) {
+    let LayerRowUi {
+        layer_index: i,
+        active_layer_index: active_idx,
+        frame_index,
+        visibility_changes,
+        rename_change,
+        new_active,
+    } = args;
     let is_active = i == active_idx;
     let layer_name = app.editor.document().layers[i].name.clone();
     let layer_visible = app.editor.document().layers[i].visible;
-    let rename_draft = ctx.data(|data| {
-        data.get_temp::<LayerRenameDraft>(layer_rename_draft_id())
-    });
+    let rename_draft = ctx.data(|data| data.get_temp::<LayerRenameDraft>(layer_rename_draft_id()));
     let is_renaming = rename_draft.as_ref().is_some_and(|draft| {
         draft.frame_index == frame_index
             && draft.layer_index == i
@@ -1192,8 +1236,7 @@ pub(crate) fn draw_layer_row_ui(
             }
 
             if is_renaming {
-                let mut draft = rename_draft
-                    .expect("rename state was checked immediately above");
+                let mut draft = rename_draft.expect("rename state was checked immediately above");
                 let text_id = layer_rename_text_id(frame_index, i);
                 let response = ui
                     .add(
@@ -1204,13 +1247,11 @@ pub(crate) fn draw_layer_row_ui(
                             .hint_text("Layer name"),
                     )
                     .on_hover_text("Rename layer");
-                let escape_pressed = response.has_focus()
-                    && ui.input(|input| input.key_pressed(egui::Key::Escape));
+                let escape_pressed =
+                    response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape));
                 let should_commit = !escape_pressed
                     && ((response.has_focus()
-                        && ui.input(|input| {
-                            input.key_pressed(egui::Key::Enter)
-                        }))
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter)))
                         || response.lost_focus());
 
                 if escape_pressed {
@@ -1221,9 +1262,7 @@ pub(crate) fn draw_layer_row_ui(
                         *rename_change = Some((i, draft.name));
                     }
                 } else {
-                    ctx.data_mut(|data| {
-                        data.insert_temp(layer_rename_draft_id(), draft)
-                    });
+                    ctx.data_mut(|data| data.insert_temp(layer_rename_draft_id(), draft));
                 }
             } else {
                 // Keep selection and renaming separate:
@@ -1239,7 +1278,7 @@ pub(crate) fn draw_layer_row_ui(
                     )
                     .on_hover_text("Double-click to rename layer");
                 if response.clicked() {
-                    *new_active = i;
+                    *new_active = Some(i);
                 }
                 if response.double_clicked() {
                     ctx.data_mut(|data| {
@@ -1254,10 +1293,7 @@ pub(crate) fn draw_layer_row_ui(
                         )
                     });
                     ui.memory_mut(|memory| {
-                        memory.request_focus(layer_rename_text_id(
-                            frame_index,
-                            i,
-                        ));
+                        memory.request_focus(layer_rename_text_id(frame_index, i));
                     });
                     ctx.request_repaint();
                 }

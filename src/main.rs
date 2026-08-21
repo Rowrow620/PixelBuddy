@@ -1,9 +1,16 @@
 pub mod app;
 pub mod document;
 pub mod editor;
+pub mod effects;
 pub mod io;
+mod shortcut_dispatcher;
 pub mod tools;
 pub mod ui;
+
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 800.0];
+#[cfg(not(target_arch = "wasm32"))]
+const MINIMUM_WINDOW_SIZE: [f32; 2] = [720.0, 540.0];
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
@@ -15,7 +22,8 @@ fn main() -> eframe::Result {
     }
     let icon = icon_result.ok();
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([1100.0, 800.0])
+        .with_inner_size(DEFAULT_WINDOW_SIZE)
+        .with_min_inner_size(MINIMUM_WINDOW_SIZE)
         .with_title("PixelBuddy")
         .with_decorations(false);
 
