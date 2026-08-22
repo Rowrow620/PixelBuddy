@@ -385,7 +385,7 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
                 ui.label(egui::RichText::new("⚠").color(Color32::RED));
             }
         } else if trimmed.len() > 6
-            || (trimmed.len() > 0 && trimmed.len() < 6 && !hex_response.has_focus())
+            || (!trimmed.is_empty() && trimmed.len() < 6 && !hex_response.has_focus())
         {
             ui.label(egui::RichText::new("⚠").color(Color32::RED));
         }
@@ -426,7 +426,11 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
 /// `egui`'s stock color-edit button uses a 275px color field, which is too
 /// large for PixelBuddy's 200px sidebar. This mirrors its popup behavior
 /// (including Escape and click-outside dismissal) while using a smaller field.
-pub(crate) fn compact_color_picker_popup(ui: &mut egui::Ui, id_salt: &str, color: &mut Color32) -> egui::Response {
+pub(crate) fn compact_color_picker_popup(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    color: &mut Color32,
+) -> egui::Response {
     let popup_id = ui.make_persistent_id(id_salt);
     let is_open = ui.memory(|memory| memory.is_popup_open(popup_id));
 
@@ -677,7 +681,7 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
                     LayerRowUi {
                         layer_index: i,
                         active_layer_index: active_idx,
-                        frame_index: frame_index,
+                        frame_index,
                         visibility_changes: &mut visibility_changes,
                         rename_change: &mut rename_change,
                         new_active: &mut new_active,
@@ -739,11 +743,9 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
         if ui
             .add(egui::Button::image(add_img).min_size(button_size))
             .on_hover_text("Add Layer")
-            .clicked()
+            .clicked() && app.add_layer_all_frames()
         {
-            if app.add_layer_all_frames() {
-                clear_layer_rename_draft(ctx);
-            }
+            clear_layer_rename_draft(ctx);
         }
 
         let del_img = egui::Image::new(egui::include_image!("../../assets/icons/trash.svg"))
@@ -755,11 +757,9 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
                 egui::Button::image(del_img).min_size(button_size),
             )
             .on_hover_text("Delete Layer")
-            .clicked()
+            .clicked() && layers_count > 1 && app.remove_active_layer_all_frames()
         {
-            if layers_count > 1 && app.remove_active_layer_all_frames() {
-                clear_layer_rename_draft(ctx);
-            }
+            clear_layer_rename_draft(ctx);
         }
 
         let dup_img = egui::Image::new(egui::include_image!("../../assets/icons/copy.svg"))
@@ -768,11 +768,9 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
         if ui
             .add(egui::Button::image(dup_img).min_size(button_size))
             .on_hover_text("Duplicate Layer")
-            .clicked()
+            .clicked() && app.duplicate_active_layer_all_frames()
         {
-            if app.duplicate_active_layer_all_frames() {
-                clear_layer_rename_draft(ctx);
-            }
+            clear_layer_rename_draft(ctx);
         }
 
         let up_img = egui::Image::new(egui::include_image!("../../assets/icons/arrow-up.svg"))
@@ -822,12 +820,11 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
         }
 
         let mut locked = app.editor.document().layers[active].locked;
-        if ui
+        let _ = ui
             .checkbox(&mut locked, "Lock layer")
             .on_hover_text("Prevent accidental edits to this layer")
             .clicked()
-            && app.set_layer_locked_current_frame(active, locked)
-        {}
+            && app.set_layer_locked_current_frame(active, locked);
 
         // Keep the label above the selector. `ComboBox::from_label` lays both
         // widgets out on one intrinsic-width row, which can extend beyond a
@@ -893,7 +890,13 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             // Add a little margin on the right so it doesn't touch the very edge
             child_ui.add_space(8.0);
 
-            if compact_color_picker_popup(&mut child_ui, "pixelbuddy.primary_color_picker", &mut color32).changed() {
+            if compact_color_picker_popup(
+                &mut child_ui,
+                "pixelbuddy.primary_color_picker",
+                &mut color32,
+            )
+            .changed()
+            {
                 let arr = color32.to_array();
                 app.editor.set_primary_color(arr);
             }

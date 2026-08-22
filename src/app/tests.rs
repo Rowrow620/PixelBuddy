@@ -671,7 +671,11 @@ fn replacement_sources_have_explicit_saved_state_and_name_policies() {
     raster_import.editor.secondary_color = [40, 50, 60, 255];
     raster_import.editor.active_tool = crate::editor::ToolType::Ellipse;
     raster_import.editor.brush_size = 7;
-    raster_import.request_imported_image(Document::new(3, 2), "sprite.png".to_owned(), super::PalettePolicy::UseDefault);
+    raster_import.request_imported_image(
+        Document::new(3, 2),
+        "sprite.png".to_owned(),
+        super::PalettePolicy::UseDefault,
+    );
     assert!(raster_import.editor.is_dirty());
     assert!(raster_import.editor.project_name.is_none());
     assert_eq!(raster_import.editor.primary_color, [0, 0, 0, 255]);
@@ -687,7 +691,11 @@ fn replacement_sources_have_explicit_saved_state_and_name_policies() {
     animation_import.editor.active_tool = crate::editor::ToolType::Move;
     animation_import.editor.brush_size = 5;
     let animation = AnimationManager::new(Document::new(6, 5));
-    animation_import.request_imported_animation(animation, "walk.png".to_owned(), super::PalettePolicy::UseDefault);
+    animation_import.request_imported_animation(
+        animation,
+        "walk.png".to_owned(),
+        super::PalettePolicy::UseDefault,
+    );
     assert!(animation_import.editor.is_dirty());
     assert!(animation_import.editor.project_name.is_none());
     assert!(animation_import.show_timeline);

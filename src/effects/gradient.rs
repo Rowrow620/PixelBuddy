@@ -37,7 +37,6 @@ pub enum GradientBlendMode {
     AlphaBlend,
 }
 
-
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum GradientTarget {
     ActiveLayer,
@@ -60,11 +59,11 @@ pub struct GradientState {
     pub dithering: GradientDithering,
     pub blend_mode: GradientBlendMode,
     pub target: GradientTarget,
-    
+
     // Linear specific
     pub linear_start: [f32; 2],
     pub linear_end: [f32; 2],
-    
+
     // Radial specific
     pub radial_center: [f32; 2],
     pub radial_radius: [f32; 2],
@@ -75,8 +74,14 @@ impl Default for GradientState {
     fn default() -> Self {
         Self {
             stops: vec![
-                GradientStop { position: 0.0, color: [0, 0, 0, 255] },
-                GradientStop { position: 1.0, color: [255, 255, 255, 255] },
+                GradientStop {
+                    position: 0.0,
+                    color: [0, 0, 0, 255],
+                },
+                GradientStop {
+                    position: 1.0,
+                    color: [255, 255, 255, 255],
+                },
             ],
             selected_stop: None,
             shape: GradientShape::Linear,
@@ -120,7 +125,7 @@ impl GradientState {
                 }
             }
         }
-        
+
         let mut stops = self.stops.clone();
         stops.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
 
@@ -134,15 +139,19 @@ impl GradientState {
         let mut lower = &stops[0];
         let mut upper = &stops[1];
         for i in 0..stops.len() - 1 {
-            if t >= stops[i].position && t <= stops[i+1].position {
+            if t >= stops[i].position && t <= stops[i + 1].position {
                 lower = &stops[i];
-                upper = &stops[i+1];
+                upper = &stops[i + 1];
                 break;
             }
         }
 
         let range = upper.position - lower.position;
-        let mut local_t = if range > 0.0 { (t - lower.position) / range } else { 0.0 };
+        let mut local_t = if range > 0.0 {
+            (t - lower.position) / range
+        } else {
+            0.0
+        };
 
         match self.interpolation {
             GradientInterpolation::Step => {
@@ -176,17 +185,25 @@ impl GradientState {
                 // Approximate sRGB -> Linear
                 let to_linear = |c: u8| -> f32 {
                     let v = c as f32 / 255.0;
-                    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+                    if v <= 0.04045 {
+                        v / 12.92
+                    } else {
+                        ((v + 0.055) / 1.055).powf(2.4)
+                    }
                 };
                 let to_srgb = |c: f32| -> u8 {
-                    let v = if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+                    let v = if c <= 0.0031308 {
+                        c * 12.92
+                    } else {
+                        1.055 * c.powf(1.0 / 2.4) - 0.055
+                    };
                     (v.clamp(0.0, 1.0) * 255.0) as u8
                 };
-                
+
                 let r1 = to_linear(c1[0]);
                 let g1 = to_linear(c1[1]);
                 let b1 = to_linear(c1[2]);
-                
+
                 let r2 = to_linear(c2[0]);
                 let g2 = to_linear(c2[1]);
                 let b2 = to_linear(c2[2]);
