@@ -90,7 +90,13 @@ impl ActiveEffectState {
             drop_shadow_offset_y: 2,
             drop_shadow_opacity: 0.5,
             pixelize_size: 4,
-            gradient: crate::effects::gradient::GradientState::default(),
+            gradient: {
+                let mut g = crate::effects::gradient::GradientState::default();
+                g.stops.clear();
+                g.stops.push(crate::effects::gradient::GradientStop { position: 0.0, color: editor.primary_color });
+                g.stops.push(crate::effects::gradient::GradientStop { position: 1.0, color: editor.secondary_color });
+                g
+            },
             preview_dirty: false,
             last_preview_refresh_at: 0.0,
         }
