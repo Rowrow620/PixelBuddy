@@ -426,8 +426,8 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
 /// `egui`'s stock color-edit button uses a 275px color field, which is too
 /// large for PixelBuddy's 200px sidebar. This mirrors its popup behavior
 /// (including Escape and click-outside dismissal) while using a smaller field.
-fn compact_primary_color_picker(ui: &mut egui::Ui, color: &mut Color32) -> egui::Response {
-    let popup_id = ui.make_persistent_id("pixelbuddy.primary_color_picker");
+pub(crate) fn compact_color_picker_popup(ui: &mut egui::Ui, id_salt: &str, color: &mut Color32) -> egui::Response {
+    let popup_id = ui.make_persistent_id(id_salt);
     let is_open = ui.memory(|memory| memory.is_popup_open(popup_id));
 
     let (rect, mut response) =
@@ -893,7 +893,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             // Add a little margin on the right so it doesn't touch the very edge
             child_ui.add_space(8.0);
 
-            if compact_primary_color_picker(&mut child_ui, &mut color32).changed() {
+            if compact_color_picker_popup(&mut child_ui, "pixelbuddy.primary_color_picker", &mut color32).changed() {
                 let arr = color32.to_array();
                 app.editor.set_primary_color(arr);
             }

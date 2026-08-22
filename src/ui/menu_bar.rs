@@ -328,6 +328,15 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         app.start_effect(crate::effects::EffectType::Pixelize);
                         ui.close_menu();
                     }
+                    ui.separator();
+                    if ui.button("Gradient Fill...").clicked() {
+                        app.start_effect(crate::effects::EffectType::GradientFill);
+                        ui.close_menu();
+                    }
+                    if ui.button("Gradient Map...").clicked() {
+                        app.start_effect(crate::effects::EffectType::GradientMap);
+                        ui.close_menu();
+                    }
                 });
 
                 ui.menu_button("Settings", |ui| {
