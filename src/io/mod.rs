@@ -26,6 +26,13 @@ pub const MAX_CANVAS_DIMENSION: u32 = crate::document::canvas::MAX_DIMENSION;
 /// Largest number of pixels accepted for one raster document or export.
 pub const MAX_CANVAS_PIXELS: u64 = crate::document::canvas::MAX_PIXELS as u64;
 
+/// Largest encoded PNG/WebP/sprite-sheet input retained for decoding.
+///
+/// Decoded dimensions have their own pixel budget; this encoded-byte cap also
+/// prevents highly incompressible or malformed files from occupying arbitrary
+/// memory while they wait in the asynchronous import queue.
+pub const MAX_RASTER_INPUT_BYTES: usize = 64 * 1024 * 1024;
+
 /// The file type selected by an export request.
 ///
 /// `SpriteSheetPng` remains distinct from `Png` even though both contain PNG
@@ -87,15 +94,46 @@ impl fmt::Display for ExportFormat {
     }
 }
 
+/// Identifies the exact project snapshot associated with an asynchronous save.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectSaveSource {
+    document_session_id: u64,
+    revision: u64,
+    request_id: u64,
+}
+
+impl ProjectSaveSource {
+    pub const fn new(document_session_id: u64, revision: u64, request_id: u64) -> Self {
+        Self {
+            document_session_id,
+            revision,
+            request_id,
+        }
+    }
+
+    pub const fn document_session_id(self) -> u64 {
+        self.document_session_id
+    }
+
+    pub const fn revision(self) -> u64 {
+        self.revision
+    }
+
+    pub const fn request_id(self) -> u64 {
+        self.request_id
+    }
+}
+
 /// Encoded export data paired with the format that must be used to save it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportRequest {
     pub format: ExportFormat,
     pub bytes: Vec<u8>,
     suggested_file_name: Option<String>,
-    /// Revision of the project snapshot being written, when this is an
-    /// editable-project save. Raster exports leave it unset.
-    source_revision: Option<u64>,
+    /// Identity of the editable-project snapshot being written. Raster
+    /// exports leave it unset. Both values are needed because revisions are
+    /// local to a document session and can repeat after project replacement.
+    project_source: Option<ProjectSaveSource>,
 }
 
 impl ExportRequest {
@@ -104,7 +142,7 @@ impl ExportRequest {
             format,
             bytes,
             suggested_file_name: None,
-            source_revision: None,
+            project_source: None,
         }
     }
 
@@ -134,10 +172,11 @@ impl ExportRequest {
         self
     }
 
-    /// Associates an editable-project save with the editor revision that was
-    /// encoded. The completion event can then avoid marking later edits saved.
-    pub fn with_source_revision(mut self, source_revision: u64) -> Self {
-        self.source_revision = Some(source_revision);
+    /// Associates an editable-project save with the exact project session and
+    /// revision that were encoded. A delayed completion can then never rename
+    /// or mark a replacement project as saved.
+    pub fn with_project_source(mut self, project_source: ProjectSaveSource) -> Self {
+        self.project_source = Some(project_source);
         self
     }
 
@@ -147,8 +186,8 @@ impl ExportRequest {
             .unwrap_or_else(|| self.format.default_file_name())
     }
 
-    pub const fn source_revision(&self) -> Option<u64> {
-        self.source_revision
+    pub const fn project_source(&self) -> Option<ProjectSaveSource> {
+        self.project_source
     }
 }
 
@@ -158,6 +197,19 @@ pub enum IoError {
     Decode {
         format: &'static str,
         message: String,
+    },
+    InputFileTooLarge {
+        format: &'static str,
+        actual: usize,
+        maximum: usize,
+    },
+    SpriteSheetFrameLimitExceeded {
+        requested: u64,
+        maximum: u64,
+    },
+    SpriteSheetPixelLimitExceeded {
+        requested: u64,
+        maximum: u64,
     },
     Encode {
         format: ExportFormat,
@@ -201,6 +253,22 @@ impl fmt::Display for IoError {
             Self::Decode { format, message } => {
                 write!(formatter, "Could not decode {format}: {message}")
             }
+            Self::InputFileTooLarge {
+                format,
+                actual,
+                maximum,
+            } => write!(
+                formatter,
+                "The {format} file is {actual} bytes, exceeding the {maximum}-byte import limit"
+            ),
+            Self::SpriteSheetFrameLimitExceeded { requested, maximum } => write!(
+                formatter,
+                "The sprite-sheet grid contains {requested} frames, exceeding the {maximum}-frame import limit"
+            ),
+            Self::SpriteSheetPixelLimitExceeded { requested, maximum } => write!(
+                formatter,
+                "The sprite-sheet import would allocate {requested} frame pixels, exceeding the {maximum}-pixel import limit"
+            ),
             Self::Encode { format, message } => {
                 write!(formatter, "Could not encode {format}: {message}")
             }
@@ -259,6 +327,25 @@ impl From<project::ProjectError> for IoError {
             message: error.to_string(),
         }
     }
+}
+
+/// Rejects an encoded raster input before header parsing or pixel decoding.
+pub fn validate_raster_input_size(data: &[u8], format: &'static str) -> Result<(), IoError> {
+    validate_raster_input_len(data.len(), format)
+}
+
+pub(crate) fn validate_raster_input_len(
+    actual: usize,
+    format: &'static str,
+) -> Result<(), IoError> {
+    if actual > MAX_RASTER_INPUT_BYTES {
+        return Err(IoError::InputFileTooLarge {
+            format,
+            actual,
+            maximum: MAX_RASTER_INPUT_BYTES,
+        });
+    }
+    Ok(())
 }
 
 /// Validates dimensions before allocating an RGBA canvas.
@@ -429,11 +516,17 @@ pub enum FileAction {
         data: Vec<u8>,
         file_name: String,
         as_new_project: bool,
+        source_document_session_id: u64,
+        source_active_frame_generation: u64,
     },
     OpenedSpriteSheet {
         data: Vec<u8>,
         file_name: String,
         as_new_project: bool,
+        source_document_session_id: u64,
+        source_revision: u64,
+        source_active_frame_generation: u64,
+        source_active_layer_index: usize,
     },
     /// Raw UTF-8 project bytes selected by the user. The app decodes these
     /// only after confirming that replacing dirty work is intentional.
@@ -444,7 +537,7 @@ pub enum FileAction {
     Exported {
         format: ExportFormat,
         file_name: String,
-        source_revision: Option<u64>,
+        project_source: Option<ProjectSaveSource>,
     },
     Failed(IoError),
 }
@@ -467,7 +560,12 @@ impl IoHandler {
     }
 }
 
-pub fn trigger_open_file(sender: Sender<FileAction>, as_new_project: bool) {
+pub fn trigger_open_file(
+    sender: Sender<FileAction>,
+    as_new_project: bool,
+    source_document_session_id: u64,
+    source_active_frame_generation: u64,
+) {
     let task = async move {
         if let Some(file) = AsyncFileDialog::new()
             .add_filter("Images", &["png", "webp"])
@@ -475,8 +573,26 @@ pub fn trigger_open_file(sender: Sender<FileAction>, as_new_project: bool) {
             .await
         {
             let file_name = file.file_name();
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Ok(metadata) = std::fs::metadata(file.path()) {
+                let actual = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+                if actual > MAX_RASTER_INPUT_BYTES {
+                    let _ = sender.send(FileAction::Failed(IoError::InputFileTooLarge {
+                        format: "image",
+                        actual,
+                        maximum: MAX_RASTER_INPUT_BYTES,
+                    }));
+                    return;
+                }
+            }
             let data = file.read().await;
-            let _ = sender.send(FileAction::OpenedImage { data, file_name, as_new_project });
+            let _ = sender.send(FileAction::OpenedImage {
+                data,
+                file_name,
+                as_new_project,
+                source_document_session_id,
+                source_active_frame_generation,
+            });
         }
     };
 
@@ -489,7 +605,14 @@ pub fn trigger_open_file(sender: Sender<FileAction>, as_new_project: bool) {
     });
 }
 
-pub fn trigger_open_spritesheet(sender: Sender<FileAction>, as_new_project: bool) {
+pub fn trigger_open_spritesheet(
+    sender: Sender<FileAction>,
+    as_new_project: bool,
+    source_document_session_id: u64,
+    source_revision: u64,
+    source_active_frame_generation: u64,
+    source_active_layer_index: usize,
+) {
     let task = async move {
         if let Some(file) = AsyncFileDialog::new()
             .add_filter("Images", &["png", "webp"])
@@ -497,8 +620,28 @@ pub fn trigger_open_spritesheet(sender: Sender<FileAction>, as_new_project: bool
             .await
         {
             let file_name = file.file_name();
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Ok(metadata) = std::fs::metadata(file.path()) {
+                let actual = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+                if actual > MAX_RASTER_INPUT_BYTES {
+                    let _ = sender.send(FileAction::Failed(IoError::InputFileTooLarge {
+                        format: "sprite sheet",
+                        actual,
+                        maximum: MAX_RASTER_INPUT_BYTES,
+                    }));
+                    return;
+                }
+            }
             let data = file.read().await;
-            let _ = sender.send(FileAction::OpenedSpriteSheet { data, file_name, as_new_project });
+            let _ = sender.send(FileAction::OpenedSpriteSheet {
+                data,
+                file_name,
+                as_new_project,
+                source_document_session_id,
+                source_revision,
+                source_active_frame_generation,
+                source_active_layer_index,
+            });
         }
     };
 
@@ -509,16 +652,6 @@ pub fn trigger_open_spritesheet(sender: Sender<FileAction>, as_new_project: bool
     std::thread::spawn(move || {
         pollster::block_on(task);
     });
-}
-
-/// Encodes the current editor state as a PixelBuddy project and prompts the
-/// user to save it.
-pub fn trigger_save_project(editor: &crate::editor::EditorState, sender: Sender<FileAction>) {
-    if let Ok(project_string) = project::encode_editor(editor) {
-        let request = ExportRequest::project(project_string.into_bytes())
-            .with_source_revision(editor.revision());
-        trigger_export(request, sender);
-    }
 }
 
 /// Opens a versioned, editable PixelBuddy project file.
@@ -539,6 +672,20 @@ pub fn trigger_open_project(sender: Sender<FileAction>) {
             .await
         {
             let file_name = file.file_name();
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Ok(metadata) = std::fs::metadata(file.path()) {
+                let actual = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+                if actual > project::MAX_PROJECT_FILE_BYTES {
+                    let _ = sender.send(FileAction::Failed(
+                        project::ProjectError::FileTooLarge {
+                            actual,
+                            maximum: project::MAX_PROJECT_FILE_BYTES,
+                        }
+                        .into(),
+                    ));
+                    return;
+                }
+            }
             let data = file.read().await;
             let _ = sender.send(FileAction::OpenedProject { data, file_name });
         }
@@ -558,7 +705,7 @@ pub fn trigger_export(request: ExportRequest, sender: Sender<FileAction>) {
     let task = async move {
         let format = request.format;
         let suggested_file_name = request.suggested_file_name().to_owned();
-        let source_revision = request.source_revision();
+        let project_source = request.project_source();
         let dialog = AsyncFileDialog::new()
             .add_filter(format.dialog_filter_name(), format.extensions())
             .set_file_name(&suggested_file_name);
@@ -570,7 +717,7 @@ pub fn trigger_export(request: ExportRequest, sender: Sender<FileAction>) {
                     let _ = sender.send(FileAction::Exported {
                         format,
                         file_name,
-                        source_revision,
+                        project_source,
                     });
                 }
                 Err(error) => {
@@ -603,7 +750,8 @@ pub fn trigger_export_png(data: Vec<u8>, sender: Sender<FileAction>) {
 mod tests {
     use super::{
         resize_rgba_nearest_neighbor, scaled_canvas_dimensions, validate_canvas_dimensions,
-        ExportFormat, ExportRequest, IoError, MAX_CANVAS_DIMENSION,
+        validate_raster_input_len, ExportFormat, ExportRequest, IoError, MAX_CANVAS_DIMENSION,
+        MAX_RASTER_INPUT_BYTES,
     };
 
     #[test]
@@ -622,14 +770,34 @@ mod tests {
             ExportFormat::SpriteSheetPng.dialog_filter_name()
         );
 
-        let request = ExportRequest::gif(vec![1, 2, 3])
-            .with_suggested_file_name("walk.gif")
-            .with_source_revision(7);
-        assert_eq!(request.format, ExportFormat::Gif);
-        assert_eq!(request.suggested_file_name(), "walk.gif");
-        assert_eq!(request.source_revision(), Some(7));
+        let request = ExportRequest::project(vec![1, 2, 3])
+            .with_suggested_file_name("walk.pbud")
+            .with_project_source(super::ProjectSaveSource::new(3, 7, 11));
+        assert_eq!(request.format, ExportFormat::Project);
+        assert_eq!(request.suggested_file_name(), "walk.pbud");
+        let source = request
+            .project_source()
+            .expect("project source should be retained");
+        assert_eq!(source.document_session_id(), 3);
+        assert_eq!(source.revision(), 7);
+        assert_eq!(source.request_id(), 11);
     }
 
+    #[test]
+    fn encoded_raster_input_size_accepts_the_boundary_and_rejects_one_byte_over() {
+        assert_eq!(
+            validate_raster_input_len(MAX_RASTER_INPUT_BYTES, "test image"),
+            Ok(())
+        );
+        assert_eq!(
+            validate_raster_input_len(MAX_RASTER_INPUT_BYTES + 1, "test image"),
+            Err(IoError::InputFileTooLarge {
+                format: "test image",
+                actual: MAX_RASTER_INPUT_BYTES + 1,
+                maximum: MAX_RASTER_INPUT_BYTES,
+            })
+        );
+    }
     #[test]
     fn canvas_dimension_validation_rejects_invalid_and_oversized_images() {
         assert!(validate_canvas_dimensions(1, 1).is_ok());

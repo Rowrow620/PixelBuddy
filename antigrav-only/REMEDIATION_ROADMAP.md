@@ -404,6 +404,21 @@ Recent UI resilience work also replaced the fixed 200 px right sidebar with a re
 - **Testing:** use table-driven pure-transform tests for pixel output and app-level tests for opening, changing, applying, canceling, undo/redo, dirty state, selection clipping, locked layers, and cache invalidation. Add native/WASM output hashes for deterministic transforms and boundary tests for the largest accepted parameters.
 - **Warning cleanup:** wire the useful app command wrappers into Layers/Palette/History UI, remove wrappers that have no production caller, and use the window-size constants in `ViewportBuilder` including its minimum-size constraint. Restore a warning-free `cargo check` before the final Milestone 6 hardening pass.
 
+#### Shared preview performance contract
+
+Apply these rules to every current and future effect, filter, transform, or dialog that renders a live document preview:
+
+- [x] Keep one effect-owned preview document and restore its active-layer pixel buffer in place when dimensions and layer structure are unchanged. Do not clone the entire project on every parameter tick.
+- [x] Commit the already-rendered preview on **Apply** as one editor mutation. Do not run the transform a second time or let the committed result differ from the final visible preview.
+- [x] Limit continuous pointer-driven preview refreshes to 30 Hz while still forcing an immediate refresh after release or any non-drag parameter change.
+- [x] Cache repeated Adjust Color RGB conversions with a bounded 4,096-entry per-refresh cache; preserve each pixel's original alpha.
+- [x] Use bulk wrapped row copies for whole-layer Offset previews, while retaining the exact per-pixel path when a selection constrains the operation.
+- [x] Reuse the preview's active-layer allocation when possible and keep temporary full-canvas storage to a small, documented number of buffers.
+- [x] Cover allocation reuse, optimized-vs-reference pixel output, cache-equivalent color output, and drag/final-refresh timing with focused regressions.
+- [ ] If a future effect still misses interaction targets on the largest supported canvases, add a bounded downsampled interaction preview and/or a cancellable background worker with generation IDs. Always finish with an exact full-resolution preview before Apply becomes available.
+- [ ] For neighborhood effects, gradients, and other multi-pass operations, reuse scratch buffers and define explicit work limits before exposing radius, blur, stop-count, or iteration controls.
+
+
 Suggested rough order:
 
 1. [x] Clean the warning baseline and finish shared scope/edge contracts.
@@ -591,6 +606,8 @@ The deferred palette-policy chooser from Milestone 1.1 remains a product follow-
 | 2026-08-21 | Milestone 5 / release pipeline | Implementation complete; hosted confirmation pending | SHA-pinned Actions and Dependabot; Rust 1.88 format/strict Clippy/195 tests/native release/WASM pass; cargo-deny advisories/licenses/sources pass with one documented unmaintained transitive exception; deterministic notices, hostile fixtures, security/recovery docs, and native/Web smoke checks added |
 | 2026-08-21 | Milestone 6 / palette, picker, and effects roadmap | In progress | Larger fixed RGB/hex picker complete; palette policy remains deferred; 13-effect inventory and detailed Adjust Color/Gradient contracts retained |
 | 2026-08-21 | Responsive right sidebar | Complete for current scope | Replaced fixed 200 px width with a resizable 220–320 px policy (240 px default), stacked Blend Mode controls, and retained width-derived palette columns; full 193-test suite passed at implementation time |
+| 2026-08-21 | Arbitrary canvas dimensions | Complete for current scope | Settings now exposes validated Custom Size flows for New Canvas and Resize Existing Canvas; both retain the 8,192-pixel side and 16,777,216-pixel aggregate safety limits while allowing non-preset dimensions |
+| 2026-08-21 | Milestone 6 / Shared preview performance | Complete for current synchronous effects | Reused active-layer preview buffers, committed the visible preview without recomputation, added bounded Adjust Color caching and bulk wrapped Offset copies, and capped pointer-driven refresh at 30 Hz with immediate final refresh; the reusable escalation path for downsampling/workers is documented above |
 | 2026-08-21 | Milestone 6 / Effects foundation and Rotate | In progress | Seven effects exposed through a shared modal; all receive aspect-correct previews backed by effect-owned documents, so preview/cancel does not dirty project state. Rotate supports arbitrary −180°…180° nearest-neighbor angles plus readable presets; 196 native tests and WASM check pass |
 
 Update this table whenever a finding starts, changes scope, or closes. Link a commit or pull request once the intentionally uncommitted remediation work is split into reviewable changes.

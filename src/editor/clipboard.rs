@@ -33,7 +33,10 @@ impl ClipboardBuffer {
 
         let w = max_x - min_x + 1;
         let h = max_y - min_y + 1;
-        let mut pixels = Vec::with_capacity((w * h) as usize);
+        let pixel_capacity = u64::from(w)
+            .checked_mul(u64::from(h))
+            .and_then(|pixels| usize::try_from(pixels).ok())?;
+        let mut pixels = Vec::with_capacity(pixel_capacity);
 
         for y in min_y..=max_y {
             for x in min_x..=max_x {

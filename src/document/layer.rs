@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::canvas::Canvas;
+use super::{canvas::Canvas, valid_layer_name};
+use crate::document::canvas::CanvasError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum BlendMode {
@@ -20,16 +21,61 @@ pub struct Layer {
     pub locked: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayerError {
+    InvalidName,
+    Canvas(CanvasError),
+}
+
+impl std::fmt::Display for LayerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidName => write!(f, "layer name is invalid"),
+            Self::Canvas(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for LayerError {}
+
+impl From<CanvasError> for LayerError {
+    fn from(error: CanvasError) -> Self {
+        Self::Canvas(error)
+    }
+}
+
 impl Layer {
-    pub fn new(name: impl Into<String>, width: u32, height: u32) -> Self {
-        Self {
-            name: name.into(),
-            canvas: Canvas::new(width, height),
+    pub fn try_new(name: impl Into<String>, width: u32, height: u32) -> Result<Self, LayerError> {
+        let name = name.into();
+        if !valid_layer_name(&name) {
+            return Err(LayerError::InvalidName);
+        }
+        Ok(Self {
+            name,
+            canvas: Canvas::try_new(width, height)?,
             opacity: 1.0,
             blend_mode: BlendMode::Normal,
             visible: true,
             locked: false,
+        })
+    }
+
+    pub(crate) fn new(name: impl Into<String>, width: u32, height: u32) -> Self {
+        Self::try_new(name, width, height).expect("internal layer construction must be valid")
+    }
+
+    pub fn try_resized(&self, width: u32, height: u32) -> Result<Self, LayerError> {
+        if !valid_layer_name(&self.name) {
+            return Err(LayerError::InvalidName);
         }
+        Ok(Self {
+            name: self.name.clone(),
+            canvas: self.canvas.try_resized(width, height)?,
+            opacity: self.opacity,
+            blend_mode: self.blend_mode,
+            visible: self.visible,
+            locked: self.locked,
+        })
     }
 
     /// Returns opacity normalized to the supported 0.0..=1.0 range.
@@ -119,7 +165,23 @@ impl Layer {
 
 #[cfg(test)]
 mod tests {
-    use super::{BlendMode, Layer};
+    use super::{BlendMode, Layer, LayerError};
+    use crate::document::{canvas::CanvasError, MAX_LAYER_NAME_BYTES};
+
+    #[test]
+    fn fallible_construction_rejects_invalid_names_and_dimensions() {
+        assert_eq!(
+            Layer::try_new("x".repeat(MAX_LAYER_NAME_BYTES + 1), 1, 1).unwrap_err(),
+            LayerError::InvalidName
+        );
+        assert_eq!(
+            Layer::try_new("Layer", 0, 1).unwrap_err(),
+            LayerError::Canvas(CanvasError::InvalidDimensions {
+                width: 0,
+                height: 1,
+            })
+        );
+    }
 
     #[test]
     fn transparent_destination_keeps_source_color_for_every_blend_mode() {

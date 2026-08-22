@@ -14,19 +14,21 @@ permissions:
 
 jobs:
   quality:
+    name: MSRV quality and release build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+      - name: Setup documented MSRV
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: 1.88.0
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
 
       - name: Cache Cargo dependencies and build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -35,6 +37,12 @@ jobs:
           key: ${{ runner.os }}-rust-1.88.0-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-rust-1.88.0-
+
+      - name: Verify dependency notice is current
+        shell: pwsh
+        run: |
+          ./scripts/generate_dependency_notices.ps1
+          git diff --exit-code -- THIRD_PARTY_NOTICES.md
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -45,8 +53,14 @@ jobs:
       - name: Run tests
         run: cargo test --all-targets --all-features --locked
 
-      - name: Check WebAssembly build
-        run: cargo check --target wasm32-unknown-unknown --all-features --locked
+      - name: Build native release
+        run: cargo build --release --all-features --locked
+
+      - name: Smoke-test native release artifact
+        run: ./target/release/pixelbuddy --version
+
+      - name: Check WebAssembly tests and application
+        run: cargo check --target wasm32-unknown-unknown --tests --all-features --locked
 
   deploy:
     if: github.event_name != 'pull_request'
@@ -64,15 +78,16 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: 1.88.0
           targets: wasm32-unknown-unknown
 
       - name: Cache Cargo dependencies and build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -83,18 +98,23 @@ jobs:
             ${{ runner.os }}-rust-1.88.0-
 
       - name: Install Trunk
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
         with:
           tool: trunk@0.21.7
 
-      - name: Build Web Bundle
+      - name: Build Web bundle
         run: trunk build --release --locked
 
-      - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Smoke-test Web bundle
+        run: |
+          test -s dist/index.html
+          find dist -name '*.wasm' -type f -size +0c | grep -q .
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: 'dist'
+          path: dist
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

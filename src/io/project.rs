@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     document::{
-        animation::{MAX_FPS, MIN_FPS},
+        animation::{
+            FrameTag, FrameTagValidationError, MAX_ANIMATION_FRAMES, MAX_ANIMATION_TAGS, MAX_FPS,
+            MIN_FPS,
+        },
         AnimationFrame, AnimationManager, Canvas, Document, Layer, Palette,
     },
     editor::{EditorState, ToolType},
@@ -44,6 +47,15 @@ pub const MAX_PROJECT_FILE_BYTES: usize = 256 * 1024 * 1024;
 /// project-level cap prevents a valid-but-hostile file from multiplying that
 /// allocation across thousands of layers or frames.
 pub const MAX_PROJECT_CANVAS_BYTES: usize = 256 * 1024 * 1024;
+
+/// Recovery uses browser/native key-value storage and therefore has a lower
+/// limit than an explicitly saved project file.
+pub const MAX_RECOVERY_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
+/// Metadata collection limits prevent tiny canvases from multiplying model/UI
+/// allocations through huge layer or palette vectors.
+pub const MAX_LAYERS_PER_FRAME: usize = crate::document::MAX_LAYERS_PER_FRAME;
+pub const MAX_PALETTE_COLORS: usize = crate::document::MAX_PALETTE_COLORS;
+pub const MAX_LAYER_NAME_BYTES: usize = crate::document::MAX_LAYER_NAME_BYTES;
 
 /// Errors that describe an invalid or unsupported editable project.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,6 +142,14 @@ pub enum ProjectError {
     },
     ProjectCanvasLimitExceeded {
         maximum: usize,
+    },
+    ResourceLimitExceeded {
+        resource: &'static str,
+        actual: usize,
+        maximum: usize,
+    },
+    InvalidMetadata {
+        message: String,
     },
 }
 
@@ -259,6 +279,17 @@ impl fmt::Display for ProjectError {
                 formatter,
                 "The project contains more than {maximum} bytes of editable canvas data"
             ),
+            Self::ResourceLimitExceeded {
+                resource,
+                actual,
+                maximum,
+            } => write!(
+                formatter,
+                "The project contains {actual} {resource}, exceeding the limit of {maximum}"
+            ),
+            Self::InvalidMetadata { message } => {
+                write!(formatter, "The project contains invalid metadata: {message}")
+            }
         }
     }
 }
@@ -463,7 +494,11 @@ impl StoredAnimation {
                 .map(StoredAnimationFrame::from_runtime)
                 .collect(),
             tags: animation.tags.clone(),
-            current_frame_index: animation.current_frame_index,
+            // Playback uses `current_frame_index` as a transient preview
+            // cursor. Persist the stable editing selection it started from so
+            // merely previewing cannot make clean in-memory state diverge
+            // from an asynchronous save snapshot.
+            current_frame_index: animation.selected_frame_index(),
             fps: animation.fps,
             onion_skin_enabled: animation.onion_skin_enabled,
             onion_skin_opacity: animation.onion_skin_opacity,
@@ -471,6 +506,7 @@ impl StoredAnimation {
     }
 
     fn into_runtime(self) -> Result<AnimationManager, ProjectError> {
+        validate_animation_metadata(&self.tags, self.frames.len())?;
         if self.frames.is_empty() {
             return Err(ProjectError::EmptyAnimation);
         }
@@ -526,6 +562,7 @@ impl StoredAnimation {
             fps: self.fps,
             is_playing: false,
             last_frame_time: 0.0,
+            playback_origin_frame_index: None,
             onion_skin_enabled: self.onion_skin_enabled,
             onion_skin_opacity: self.onion_skin_opacity,
         })
@@ -582,6 +619,11 @@ impl StoredDocument {
         if self.layers.is_empty() {
             return Err(ProjectError::EmptyLayers { frame_index });
         }
+        enforce_resource_limit(
+            "layers in one frame",
+            self.layers.len(),
+            MAX_LAYERS_PER_FRAME,
+        )?;
         if self.active_layer_index >= self.layers.len() {
             return Err(ProjectError::InvalidActiveLayerIndex {
                 frame_index,
@@ -643,6 +685,7 @@ impl StoredLayer {
         document_height: u32,
         total_canvas_bytes: &mut usize,
     ) -> Result<Layer, ProjectError> {
+        validate_layer_name(&self.name, frame_index, layer_index)?;
         if !is_normalized_finite(self.opacity) {
             return Err(ProjectError::InvalidLayerOpacity {
                 frame_index,
@@ -753,6 +796,7 @@ impl StoredPalette {
         if self.colors.is_empty() {
             return Err(ProjectError::EmptyPalette { frame_index });
         }
+        enforce_resource_limit("palette colors", self.colors.len(), MAX_PALETTE_COLORS)?;
         if self.selected_index >= self.colors.len() {
             return Err(ProjectError::InvalidPaletteIndex {
                 frame_index,
@@ -768,13 +812,68 @@ impl StoredPalette {
     }
 }
 
+fn enforce_resource_limit(
+    resource: &'static str,
+    actual: usize,
+    maximum: usize,
+) -> Result<(), ProjectError> {
+    if actual > maximum {
+        return Err(ProjectError::ResourceLimitExceeded {
+            resource,
+            actual,
+            maximum,
+        });
+    }
+    Ok(())
+}
+
+fn validate_animation_metadata(tags: &[FrameTag], frame_count: usize) -> Result<(), ProjectError> {
+    enforce_resource_limit("animation frames", frame_count, MAX_ANIMATION_FRAMES)?;
+    enforce_resource_limit("animation tags", tags.len(), MAX_ANIMATION_TAGS)?;
+    for (index, tag) in tags.iter().enumerate() {
+        if let Err(error) = tag.validate(frame_count) {
+            let reason = match error {
+                FrameTagValidationError::EmptyName => "has an empty name",
+                FrameTagValidationError::NameTooLong => "has a name that exceeds the text limit",
+                FrameTagValidationError::ControlCharacter => {
+                    "has a name containing control characters"
+                }
+                FrameTagValidationError::InvalidColor => "has an invalid color",
+                FrameTagValidationError::InvalidRange => "targets an invalid frame range",
+            };
+            return Err(ProjectError::InvalidMetadata {
+                message: format!("animation tag {} {reason}", index + 1),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_layer_name(
+    name: &str,
+    frame_index: usize,
+    layer_index: usize,
+) -> Result<(), ProjectError> {
+    if !crate::document::valid_layer_name(name) {
+        return Err(ProjectError::InvalidMetadata {
+            message: format!(
+                "frame {}, layer {} has an invalid or overlong name",
+                frame_index + 1,
+                layer_index + 1
+            ),
+        });
+    }
+    Ok(())
+}
 fn validate_runtime_animation(animation: &AnimationManager) -> Result<(), ProjectError> {
+    validate_animation_metadata(&animation.tags, animation.frames.len())?;
     if animation.frames.is_empty() {
         return Err(ProjectError::EmptyAnimation);
     }
-    if animation.current_frame_index >= animation.frames.len() {
+    let selected_frame_index = animation.selected_frame_index();
+    if selected_frame_index >= animation.frames.len() {
         return Err(ProjectError::InvalidCurrentFrameIndex {
-            index: animation.current_frame_index,
+            index: selected_frame_index,
             frame_count: animation.frames.len(),
         });
     }
@@ -823,6 +922,11 @@ fn validate_runtime_document(
     if document.layers.is_empty() {
         return Err(ProjectError::EmptyLayers { frame_index });
     }
+    enforce_resource_limit(
+        "layers in one frame",
+        document.layers.len(),
+        MAX_LAYERS_PER_FRAME,
+    )?;
     if document.active_layer_index >= document.layers.len() {
         return Err(ProjectError::InvalidActiveLayerIndex {
             frame_index,
@@ -833,6 +937,11 @@ fn validate_runtime_document(
     if document.palette.colors.is_empty() {
         return Err(ProjectError::EmptyPalette { frame_index });
     }
+    enforce_resource_limit(
+        "palette colors",
+        document.palette.colors.len(),
+        MAX_PALETTE_COLORS,
+    )?;
     if document.palette.selected_index >= document.palette.colors.len() {
         return Err(ProjectError::InvalidPaletteIndex {
             frame_index,
@@ -842,6 +951,7 @@ fn validate_runtime_document(
     }
 
     for (layer_index, layer) in document.layers.iter().enumerate() {
+        validate_layer_name(&layer.name, frame_index, layer_index)?;
         if !is_normalized_finite(layer.opacity) {
             return Err(ProjectError::InvalidLayerOpacity {
                 frame_index,
@@ -1090,6 +1200,114 @@ mod tests {
                 frame_index: 0,
                 duration_ms: 0,
             })
+        );
+    }
+
+    #[test]
+    fn project_metadata_limits_reject_excessive_frames_layers_palettes_and_tags() {
+        let mut frames = EditorState::new(1, 1);
+        let frame = frames.animation.frames[0].clone();
+        frames.animation.frames = vec![frame; crate::document::animation::MAX_ANIMATION_FRAMES + 1];
+        assert!(matches!(
+            encode_editor(&frames),
+            Err(ProjectError::ResourceLimitExceeded {
+                resource: "animation frames",
+                ..
+            })
+        ));
+
+        let mut layers = EditorState::new(1, 1);
+        while layers.document().layers.len() <= super::MAX_LAYERS_PER_FRAME {
+            layers.document_mut().add_layer();
+        }
+        assert!(matches!(
+            encode_editor(&layers),
+            Err(ProjectError::ResourceLimitExceeded {
+                resource: "layers in one frame",
+                ..
+            })
+        ));
+
+        let mut palette = EditorState::new(1, 1);
+        while palette.document().palette.colors.len() <= super::MAX_PALETTE_COLORS {
+            palette.document_mut().palette.add_color([1, 2, 3, 255]);
+        }
+        assert!(matches!(
+            encode_editor(&palette),
+            Err(ProjectError::ResourceLimitExceeded {
+                resource: "palette colors",
+                ..
+            })
+        ));
+
+        let mut tags = EditorState::new(1, 1);
+        tags.animation.tags = (0..=crate::document::animation::MAX_ANIMATION_TAGS)
+            .map(|index| crate::document::animation::FrameTag {
+                name: format!("Tag {index}"),
+                color: [0.5, 0.5, 0.5],
+                from_frame: 0,
+                to_frame: 0,
+            })
+            .collect();
+        assert!(matches!(
+            encode_editor(&tags),
+            Err(ProjectError::ResourceLimitExceeded {
+                resource: "animation tags",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn invalid_tag_text_is_rejected_on_encode_and_decode() {
+        let mut editor = EditorState::new(1, 1);
+        editor
+            .animation
+            .tags
+            .push(crate::document::animation::FrameTag {
+                name: "bad\nname".to_owned(),
+                color: [0.5, 0.5, 0.5],
+                from_frame: 0,
+                to_frame: 0,
+            });
+        assert!(matches!(
+            encode_editor(&editor),
+            Err(ProjectError::InvalidMetadata { message })
+                if message.contains("control characters")
+        ));
+
+        editor.animation.tags[0].name =
+            "x".repeat(crate::document::animation::MAX_TAG_NAME_BYTES + 1);
+        let mut file = ProjectFile::from_editor(&EditorState::new(1, 1))
+            .expect("the base project should be valid");
+        file.animation.tags = editor.animation.tags;
+        assert!(matches!(
+            file.into_editor(),
+            Err(ProjectError::InvalidMetadata { message })
+                if message.contains("text limit")
+        ));
+    }
+
+    #[test]
+    fn hostile_project_fixtures_are_rejected_at_the_expected_boundary() {
+        let corrupt = include_str!("../../tests/fixtures/corrupt_project.pbud");
+        assert!(matches!(
+            decode_editor(corrupt),
+            Err(ProjectError::Decode { .. })
+        ));
+
+        let oversized = include_str!("../../tests/fixtures/oversized_metadata.pbud");
+        let error = match decode_editor(oversized) {
+            Ok(_) => panic!("oversized metadata must be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(
+                error,
+                ProjectError::InvalidMetadata { ref message }
+                    if message.contains("overlong name")
+            ),
+            "unexpected oversized-metadata error: {error:?}"
         );
     }
 

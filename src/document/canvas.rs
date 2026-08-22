@@ -94,40 +94,10 @@ impl Canvas {
         })
     }
 
-    /// Creates a canvas filled with `color` when its dimensions are valid.
-    pub fn try_new_with_color(
-        width: u32,
-        height: u32,
-        color: [u8; 4],
-    ) -> Result<Self, CanvasError> {
-        let mut canvas = Self::try_new(width, height)?;
-        canvas.clear(color);
-        Ok(canvas)
-    }
-
-    /// Creates a canvas while preserving the original infallible API.
-    ///
-    /// New callers should use [`Canvas::try_new`] so they can show a helpful
-    /// validation error. Invalid or unallocatable legacy requests produce an
-    /// empty canvas instead of overflowing or panicking.
-    pub fn new(width: u32, height: u32) -> Self {
-        Self::try_new(width, height).unwrap_or_else(|_| Self::empty())
-    }
-
-    /// Creates a colored canvas while preserving the original infallible API.
-    /// See [`Canvas::new`] for its failure behavior.
-    pub fn new_with_color(width: u32, height: u32, color: [u8; 4]) -> Self {
-        Self::try_new_with_color(width, height, color).unwrap_or_else(|_| Self::empty())
-    }
-
-    /// Returns a zero-sized canvas used as the safe fallback for legacy,
-    /// infallible construction.
-    pub fn empty() -> Self {
-        Self {
-            width: 0,
-            height: 0,
-            pixels: Vec::new(),
-        }
+    /// Internal convenience for dimensions already validated by a higher-level
+    /// model constructor. External input paths must use [`Canvas::try_new`].
+    pub(crate) fn new(width: u32, height: u32) -> Self {
+        Self::try_new(width, height).expect("internal canvas dimensions must be valid")
     }
 
     pub fn get_pixel(&self, x: u32, y: u32) -> [u8; 4] {
@@ -155,18 +125,24 @@ impl Canvas {
         &self.pixels
     }
 
+    pub(crate) fn retained_pixel_bytes(&self) -> usize {
+        self.pixels.capacity()
+    }
+
     pub fn pixels_mut(&mut self) -> &mut [u8] {
         &mut self.pixels
     }
 
-    pub fn resize(&mut self, new_width: u32, new_height: u32) {
-        let mut new_canvas = Canvas::new(new_width, new_height);
+    /// Builds a resized copy without changing the source canvas on validation
+    /// or allocation failure.
+    pub fn try_resized(&self, new_width: u32, new_height: u32) -> Result<Self, CanvasError> {
+        let mut resized = Canvas::try_new(new_width, new_height)?;
         for y in 0..self.height.min(new_height) {
             for x in 0..self.width.min(new_width) {
-                new_canvas.set_pixel(x, y, self.get_pixel(x, y));
+                resized.set_pixel(x, y, self.get_pixel(x, y));
             }
         }
-        *self = new_canvas;
+        Ok(resized)
     }
 
     pub fn in_bounds(&self, x: i32, y: i32) -> bool {
@@ -315,14 +291,13 @@ mod tests {
     }
 
     #[test]
-    fn legacy_construction_falls_back_to_an_empty_canvas() {
-        let canvas = Canvas::new(0, 1);
+    fn failed_resize_keeps_the_original_canvas_unchanged() {
+        let mut canvas = Canvas::new(2, 2);
+        canvas.set_pixel(1, 1, [1, 2, 3, 4]);
 
-        assert_eq!(
-            (canvas.width(), canvas.height(), canvas.pixels().len()),
-            (0, 0, 0)
-        );
-        assert_eq!(canvas.get_pixel(0, 0), [0, 0, 0, 0]);
+        assert!(canvas.try_resized(0, 1).is_err());
+        assert_eq!((canvas.width(), canvas.height()), (2, 2));
+        assert_eq!(canvas.get_pixel(1, 1), [1, 2, 3, 4]);
     }
 
     #[test]

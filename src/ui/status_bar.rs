@@ -1,5 +1,15 @@
-use crate::app::PixelBuddyApp;
+use crate::app::{PixelBuddyApp, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM};
 use egui::{Color32, RichText, Widget};
+
+fn zoom_label(zoom: f32) -> String {
+    if zoom >= 1.0 {
+        format!("{zoom:.1}x")
+    } else if zoom >= 0.01 {
+        format!("{:.1}%", zoom * 100.0)
+    } else {
+        format!("{:.2}%", zoom * 100.0)
+    }
+}
 
 pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     egui::TopBottomPanel::bottom("status_bar")
@@ -86,35 +96,35 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 }
 
                 ui.label(RichText::new("|").color(Color32::from_white_alpha(100)));
-                
+
                 ui.label(
                     RichText::new("Zoom:")
                         .color(Color32::from_white_alpha(180))
                         .size(12.0),
                 );
-                
+
                 if egui::Button::new("➖")
                     .frame(false)
                     .ui(ui)
-                    .on_hover_text("Zoom Out (-)")
+                    .on_hover_text("Zoom Out")
                     .clicked()
                 {
-                    app.zoom = (app.zoom / 1.18).clamp(0.5, 64.0);
+                    app.zoom = (app.zoom / 1.18).clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
                 }
-                
+
                 ui.label(
-                    RichText::new(format!("{:.0}x", app.zoom.max(1.0)))
+                    RichText::new(zoom_label(app.zoom))
                         .color(Color32::from_white_alpha(180))
                         .size(12.0),
                 );
-                
+
                 if egui::Button::new("➕")
                     .frame(false)
                     .ui(ui)
-                    .on_hover_text("Zoom In (+)")
+                    .on_hover_text("Zoom In")
                     .clicked()
                 {
-                    app.zoom = (app.zoom * 1.18).clamp(0.5, 64.0);
+                    app.zoom = (app.zoom * 1.18).clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
                 }
             });
         });
@@ -122,4 +132,18 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
 
 fn ui_bg_color(ctx: &egui::Context) -> Color32 {
     ctx.style().visuals.window_fill
+}
+
+#[cfg(test)]
+mod tests {
+    use super::zoom_label;
+
+    #[test]
+    fn zoom_label_keeps_low_zoom_steps_visible() {
+        assert_eq!(zoom_label(2.0), "2.0x");
+        assert_eq!(zoom_label(0.5), "50.0%");
+        assert_eq!(zoom_label(0.00464), "0.46%");
+        assert_eq!(zoom_label(0.00548), "0.55%");
+        assert_eq!(zoom_label(0.001), "0.10%");
+    }
 }

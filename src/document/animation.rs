@@ -3,6 +3,13 @@ use crate::document::{Canvas, Document, Layer};
 /// Lowest and highest playback rates exposed by the timeline.
 pub const MIN_FPS: u32 = 1;
 pub const MAX_FPS: u32 = 30;
+/// Maximum frames retained by one editable animation/project.
+pub const MAX_ANIMATION_FRAMES: usize = 4_096;
+/// Maximum tags retained by one editable animation/project.
+pub const MAX_ANIMATION_TAGS: usize = 1_024;
+/// Tag names are bounded in both Unicode scalar count and encoded UTF-8 bytes.
+pub const MAX_TAG_NAME_CHARS: usize = 64;
+pub const MAX_TAG_NAME_BYTES: usize = 128;
 const MAX_PLAYBACK_CATCH_UP_STEPS: usize = 120;
 
 #[derive(Clone)]
@@ -36,6 +43,45 @@ pub struct FrameTag {
     pub to_frame: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameTagValidationError {
+    EmptyName,
+    NameTooLong,
+    ControlCharacter,
+    InvalidColor,
+    InvalidRange,
+}
+
+impl FrameTag {
+    pub fn validate(&self, frame_count: usize) -> Result<(), FrameTagValidationError> {
+        let trimmed = self.name.trim();
+        if trimmed.is_empty() {
+            return Err(FrameTagValidationError::EmptyName);
+        }
+        if trimmed.len() > MAX_TAG_NAME_BYTES || trimmed.chars().count() > MAX_TAG_NAME_CHARS {
+            return Err(FrameTagValidationError::NameTooLong);
+        }
+        if trimmed.chars().any(char::is_control) {
+            return Err(FrameTagValidationError::ControlCharacter);
+        }
+        if self
+            .color
+            .iter()
+            .any(|component| !component.is_finite() || !(0.0..=1.0).contains(component))
+        {
+            return Err(FrameTagValidationError::InvalidColor);
+        }
+        if self.from_frame > self.to_frame || self.to_frame >= frame_count {
+            return Err(FrameTagValidationError::InvalidRange);
+        }
+        Ok(())
+    }
+}
+
+/// Ordered animation frames and their runtime playback cursor.
+///
+/// Frame indices are positional. Async UI work must pair an index with the
+/// app-level document session and frame generation before applying results.
 pub struct AnimationManager {
     pub frames: Vec<AnimationFrame>,
     pub tags: Vec<FrameTag>,
@@ -43,6 +89,12 @@ pub struct AnimationManager {
     pub fps: u32,
     pub is_playing: bool,
     pub last_frame_time: f64,
+    /// The editing selection that playback temporarily previews from.
+    ///
+    /// While present, `current_frame_index` is a runtime preview cursor and
+    /// this value is the stable selection written to project files. Pausing
+    /// adopts the preview cursor; stopping restores this origin.
+    pub(crate) playback_origin_frame_index: Option<usize>,
     pub onion_skin_enabled: bool,
     pub onion_skin_opacity: f32,
 }
@@ -56,15 +108,26 @@ impl AnimationManager {
             fps: 8,
             is_playing: false,
             last_frame_time: 0.0,
+            playback_origin_frame_index: None,
             onion_skin_enabled: false,
             onion_skin_opacity: 0.35,
         }
     }
 
-    pub fn resize(&mut self, new_width: u32, new_height: u32) {
-        for frame in &mut self.frames {
-            frame.document.resize(new_width, new_height);
+    pub fn try_resize(
+        &mut self,
+        new_width: u32,
+        new_height: u32,
+    ) -> Result<(), crate::document::LayerError> {
+        let resized = self
+            .frames
+            .iter()
+            .map(|frame| frame.document.try_resized(new_width, new_height))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (frame, document) in self.frames.iter_mut().zip(resized) {
+            frame.document = document;
         }
+        Ok(())
     }
 
     /// Converts the global FPS control into the duration stored on GIF frames.
@@ -111,6 +174,13 @@ impl AnimationManager {
         &mut self.frames[self.current_frame_index].document
     }
 
+    /// Returns the frame selection that belongs to editable project state.
+    /// During preview playback the displayed cursor can differ temporarily.
+    pub(crate) fn selected_frame_index(&self) -> usize {
+        self.playback_origin_frame_index
+            .unwrap_or(self.current_frame_index)
+    }
+
     pub fn add_frame(&mut self) {
         // A new frame belongs to the same project, so retain its layer stack,
         // palette, and active-layer choice while starting every layer empty.
@@ -146,9 +216,12 @@ impl AnimationManager {
     fn adjust_tags_for_insertion(&mut self, insert_index: usize) {
         for tag in &mut self.tags {
             if tag.from_frame >= insert_index {
+                // Inserting before a tag shifts the whole range.
                 tag.from_frame += 1;
-            }
-            if tag.to_frame >= insert_index || (tag.from_frame < insert_index && tag.to_frame >= insert_index.saturating_sub(1)) {
+                tag.to_frame += 1;
+            } else if insert_index <= tag.to_frame {
+                // Only insertion strictly inside a range expands it. A frame
+                // inserted immediately after the range is not a tag member.
                 tag.to_frame += 1;
             }
         }
@@ -295,24 +368,56 @@ impl AnimationManager {
         }
     }
 
-    pub fn select_frame(&mut self, index: usize) {
-        if index < self.frames.len() {
-            self.current_frame_index = index;
+    /// Changes the selected frame without applying editor-level transition
+    /// policy. UI code must use `EditorState`/`PixelBuddyApp` instead so
+    /// frame-local history and canvas transients cannot cross this boundary.
+    pub(crate) fn select_frame(&mut self, index: usize) -> bool {
+        if index >= self.frames.len() || index == self.current_frame_index {
+            return false;
         }
+
+        self.current_frame_index = index;
+        true
     }
 
-    pub fn toggle_play(&mut self, current_time: f64) {
+    /// Toggles preview playback.
+    ///
+    /// Returns `true` when pausing adopts a preview frame different from the
+    /// prior editing selection. The editor uses that signal to mark the
+    /// persisted selection dirty exactly once instead of on every preview tick.
+    pub fn toggle_play(&mut self, current_time: f64) -> bool {
         // A one-frame animation cannot advance, so don't leave the app in a
         // repaint loop that looks like playback but never changes the canvas.
         if self.frames.len() <= 1 {
             self.stop();
-            return;
+            return false;
         }
-        self.is_playing = !self.is_playing;
+
+        if self.is_playing {
+            return self.pause_at_current_frame();
+        }
+
+        self.playback_origin_frame_index = Some(self.current_frame_index);
+        self.is_playing = true;
         self.reset_playback_clock(current_time);
+        false
+    }
+
+    /// Pauses while retaining the frame currently visible in the preview.
+    pub(crate) fn pause_at_current_frame(&mut self) -> bool {
+        let origin = self
+            .playback_origin_frame_index
+            .take()
+            .unwrap_or(self.current_frame_index);
+        self.is_playing = false;
+        self.last_frame_time = 0.0;
+        self.current_frame_index != origin
     }
 
     pub fn stop(&mut self) {
+        if let Some(origin) = self.playback_origin_frame_index.take() {
+            self.current_frame_index = origin.min(self.frames.len().saturating_sub(1));
+        }
         self.is_playing = false;
         self.last_frame_time = 0.0;
     }
@@ -360,7 +465,7 @@ impl AnimationManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnimationFrame, AnimationManager};
+    use super::{AnimationFrame, AnimationManager, FrameTag};
     use crate::document::{BlendMode, Document};
 
     fn frame_with_marker(marker: u8, duration_ms: u32) -> AnimationFrame {
@@ -372,6 +477,50 @@ mod tests {
         AnimationFrame::with_duration(document, duration_ms)
     }
 
+    fn animation_with_nine_frames() -> AnimationManager {
+        let mut animation = AnimationManager::new(Document::new(2, 2));
+        for _ in 1..9 {
+            animation.duplicate_frame();
+        }
+        animation
+    }
+
+    #[test]
+    fn frame_insertion_preserves_exact_tag_membership() {
+        let tag = FrameTag {
+            name: "Run".to_owned(),
+            color: [0.8, 0.2, 0.2],
+            from_frame: 0,
+            to_frame: 6,
+        };
+
+        let mut after = animation_with_nine_frames();
+        after.tags.push(tag.clone());
+        after.select_frame(6);
+        after.add_frame();
+        assert_eq!((after.tags[0].from_frame, after.tags[0].to_frame), (0, 6));
+
+        let mut inside = animation_with_nine_frames();
+        inside.tags.push(FrameTag {
+            from_frame: 2,
+            to_frame: 5,
+            ..tag.clone()
+        });
+        inside.select_frame(3);
+        inside.add_frame();
+        assert_eq!((inside.tags[0].from_frame, inside.tags[0].to_frame), (2, 6));
+
+        let mut before = animation_with_nine_frames();
+        before.tags.push(FrameTag {
+            from_frame: 2,
+            to_frame: 5,
+            ..tag
+        });
+        before.select_frame(0);
+        before.add_frame();
+        assert_eq!((before.tags[0].from_frame, before.tags[0].to_frame), (3, 6));
+    }
+
     #[test]
     fn stop_does_not_change_the_selected_frame() {
         let mut animation = AnimationManager::new(Document::new(2, 2));
@@ -381,6 +530,38 @@ mod tests {
         animation.stop();
 
         assert_eq!(animation.current_frame_index, 1);
+        assert!(!animation.is_playing);
+    }
+
+    #[test]
+    fn stop_restores_the_editing_selection_after_preview_advances() {
+        let mut animation = AnimationManager::new(Document::new(2, 2));
+        animation.duplicate_frame();
+        animation.select_frame(0);
+        animation.toggle_play(0.0);
+        assert!(animation.update_playback(0.2));
+        assert_eq!(animation.current_frame_index, 1);
+        assert_eq!(animation.selected_frame_index(), 0);
+
+        animation.stop();
+
+        assert_eq!(animation.current_frame_index, 0);
+        assert_eq!(animation.selected_frame_index(), 0);
+        assert!(!animation.is_playing);
+    }
+
+    #[test]
+    fn pause_adopts_the_preview_frame_as_the_editing_selection() {
+        let mut animation = AnimationManager::new(Document::new(2, 2));
+        animation.duplicate_frame();
+        animation.select_frame(0);
+        animation.toggle_play(0.0);
+        assert!(animation.update_playback(0.2));
+
+        assert!(animation.toggle_play(0.2));
+
+        assert_eq!(animation.current_frame_index, 1);
+        assert_eq!(animation.selected_frame_index(), 1);
         assert!(!animation.is_playing);
     }
 

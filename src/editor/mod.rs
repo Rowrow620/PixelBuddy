@@ -2,12 +2,12 @@ pub mod clipboard;
 pub mod history;
 pub mod selection;
 
-use crate::document::{AnimationFrame, AnimationManager, Document};
+use crate::document::{AnimationFrame, AnimationManager, Document, Layer};
 pub use clipboard::ClipboardBuffer;
 use history::{Command, DocumentSnapshotCommand, History};
 pub use selection::Selection;
 
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ToolType {
     Hand,
     Zoom,
@@ -51,9 +51,12 @@ pub struct EditorState {
 
 impl EditorState {
     pub fn new(width: u32, height: u32) -> Self {
-        let initial_doc = Document::new(width, height);
+        Self::with_animation(AnimationManager::new(Document::new(width, height)))
+    }
+
+    fn with_animation(animation: AnimationManager) -> Self {
         Self {
-            animation: AnimationManager::new(initial_doc),
+            animation,
             history: History::new(100),
             primary_color: [0, 0, 0, 255],
             secondary_color: [255, 255, 255, 255],
@@ -68,6 +71,23 @@ impl EditorState {
         }
     }
 
+    /// Starts an unnamed project from flattened raster artwork without
+    /// inheriting serialized editor preferences from the discarded project.
+    pub(crate) fn from_imported_document(document: Document) -> Self {
+        let mut editor = Self::with_animation(AnimationManager::new(document));
+        editor.mark_dirty();
+        editor
+    }
+
+    /// Starts an unnamed project from imported raster animation frames without
+    /// inheriting project preferences or runtime state from the old editor.
+    pub(crate) fn from_imported_animation(mut animation: AnimationManager) -> Self {
+        animation.stop();
+        let mut editor = Self::with_animation(animation);
+        editor.mark_dirty();
+        editor
+    }
+
     /// The document belonging to the selected animation frame.
     ///
     /// `AnimationManager` is the sole owner of frame documents. Keeping this
@@ -80,36 +100,61 @@ impl EditorState {
     /// Mutably accesses the selected frame's document and marks the project
     /// as having unsaved changes.
     pub fn document_mut(&mut self) -> &mut Document {
+        self.pause_animation_for_editing();
         self.mark_dirty();
         self.animation.current_doc_mut()
     }
 
-    pub fn select_frame(&mut self, index: usize) {
-        if index >= self.animation.frames.len() || index == self.animation.current_frame_index {
-            return;
+    /// Selects a frame for editing and applies every model-owned transition
+    /// invariant. App/UI callers must additionally synchronize canvas
+    /// transients and GPU caches through `PixelBuddyApp::select_frame`.
+    ///
+    /// A manual selection stops playback. Same-frame and invalid requests are
+    /// complete no-ops and return `false`.
+    pub fn select_frame(&mut self, index: usize) -> bool {
+        if index >= self.animation.frames.len() {
+            return false;
         }
 
-        self.animation.current_frame_index = index;
-        self.history.clear();
-        self.selection.deselect();
-        self.mark_dirty();
+        let displayed_before = self.animation.current_frame_index;
+        let selected_before = self.animation.selected_frame_index();
+        if index == displayed_before && index == selected_before {
+            return false;
+        }
+
+        self.animation.stop();
+        if index != selected_before {
+            let changed = self.animation.select_frame(index);
+            debug_assert!(changed, "the editing selection differs from the target");
+            self.mark_dirty();
+        }
+        self.clear_active_frame_runtime();
+        true
     }
 
     /// Adds a blank frame after the selected frame and makes it active.
-    pub fn add_frame(&mut self) {
+    pub fn add_frame(&mut self) -> bool {
+        if self.animation.frames.len() >= crate::document::animation::MAX_ANIMATION_FRAMES {
+            return false;
+        }
+        self.animation.pause_at_current_frame();
         self.animation.add_frame();
-        self.history.clear();
-        self.selection.deselect();
+        self.clear_active_frame_runtime();
         self.mark_dirty();
+        true
     }
 
     /// Duplicates the selected frame, selects the duplicate, and invalidates
     /// the index-based history until it has stable object identifiers.
-    pub fn duplicate_frame(&mut self) {
+    pub fn duplicate_frame(&mut self) -> bool {
+        if self.animation.frames.len() >= crate::document::animation::MAX_ANIMATION_FRAMES {
+            return false;
+        }
+        self.animation.pause_at_current_frame();
         self.animation.duplicate_frame();
-        self.history.clear();
-        self.selection.deselect();
+        self.clear_active_frame_runtime();
         self.mark_dirty();
+        true
     }
 
     /// Copies the selected animation frame into the runtime-only frame
@@ -131,6 +176,9 @@ impl EditorState {
     /// history instead of leaving commands that could target the wrong frame.
     /// Returns `false` without changing state when no frame has been copied.
     pub fn paste_frame_after_current(&mut self) -> bool {
+        if self.animation.frames.len() >= crate::document::animation::MAX_ANIMATION_FRAMES {
+            return false;
+        }
         let Some(frame) = self.frame_clipboard.as_deref().cloned() else {
             return false;
         };
@@ -138,10 +186,9 @@ impl EditorState {
         // Changing the frame order while playback is running would otherwise
         // leave a partially elapsed duration associated with a different
         // sequence. A later Play action starts with a fresh clock.
-        self.animation.stop();
+        self.animation.pause_at_current_frame();
         self.animation.insert_frame_after_current(frame);
-        self.history.clear();
-        self.selection.deselect();
+        self.clear_active_frame_runtime();
         self.mark_dirty();
         true
     }
@@ -153,13 +200,14 @@ impl EditorState {
     /// document-only history until frame commands have stable identifiers.
     /// Returns `false` for invalid positions or a no-op move.
     pub fn move_frame(&mut self, from: usize, to: usize) -> bool {
-        if !self.animation.move_frame(from, to) {
+        if from >= self.animation.frames.len() || to >= self.animation.frames.len() || from == to {
             return false;
         }
 
-        self.animation.stop();
-        self.history.clear();
-        self.selection.deselect();
+        self.animation.pause_at_current_frame();
+        let changed = self.animation.move_frame(from, to);
+        debug_assert!(changed, "the frame move was validated above");
+        self.clear_active_frame_runtime();
         self.mark_dirty();
         true
     }
@@ -167,10 +215,14 @@ impl EditorState {
     /// Removes the selected frame when another frame remains.
     pub fn remove_frame(&mut self) {
         let previous_count = self.animation.frames.len();
+        if previous_count <= 1 {
+            return;
+        }
+
+        self.animation.pause_at_current_frame();
         self.animation.remove_frame();
         if self.animation.frames.len() != previous_count {
-            self.history.clear();
-            self.selection.deselect();
+            self.clear_active_frame_runtime();
             self.mark_dirty();
         }
     }
@@ -179,12 +231,101 @@ impl EditorState {
     pub fn update_animation_playback(&mut self, current_time: f64) -> bool {
         let advanced = self.animation.update_playback(current_time);
         if advanced {
-            self.history.clear();
-            self.selection.deselect();
+            self.clear_active_frame_runtime();
         }
         advanced
     }
 
+    /// Starts preview playback or pauses on the currently previewed frame.
+    /// Pausing adopts that frame as the persisted editing selection and marks
+    /// dirty once when it differs from the selection playback started from.
+    pub fn toggle_animation_playback(&mut self, current_time: f64) -> bool {
+        let selection_changed = self.animation.toggle_play(current_time);
+        if selection_changed {
+            self.mark_dirty();
+        }
+        selection_changed
+    }
+
+    /// Stops preview playback while retaining the visible frame for an edit.
+    pub fn pause_animation_for_editing(&mut self) -> bool {
+        if !self.animation.is_playing {
+            return false;
+        }
+
+        let selection_changed = self.animation.pause_at_current_frame();
+        if selection_changed {
+            self.mark_dirty();
+        }
+        selection_changed
+    }
+
+    fn clear_active_frame_runtime(&mut self) {
+        self.history.clear();
+        self.selection.deselect();
+    }
+
+    /// Selects a layer in only the current frame. Layer selection is persisted
+    /// per frame but does not alter artwork or frame-local history.
+    pub fn select_layer_current_frame(&mut self, index: usize) -> bool {
+        if index >= self.document().layers.len() || index == self.document().active_layer_index {
+            return false;
+        }
+        self.pause_animation_for_editing();
+        self.animation.current_doc_mut().active_layer_index = index;
+        self.mark_dirty();
+        true
+    }
+
+    pub fn select_palette_color_current_frame(&mut self, index: usize) -> bool {
+        if index >= self.document().palette.colors.len()
+            || index == self.document().palette.selected_index
+        {
+            return false;
+        }
+        self.pause_animation_for_editing();
+        self.animation.current_doc_mut().palette.set_selected(index);
+        self.mark_dirty();
+        true
+    }
+
+    pub fn create_animation_tag(&mut self, tag: crate::document::animation::FrameTag) -> bool {
+        if self.animation.tags.len() >= crate::document::animation::MAX_ANIMATION_TAGS
+            || tag.validate(self.animation.frames.len()).is_err()
+        {
+            return false;
+        }
+        self.animation.tags.push(tag);
+        self.mark_dirty();
+        true
+    }
+
+    pub fn update_animation_tag(
+        &mut self,
+        index: usize,
+        tag: crate::document::animation::FrameTag,
+    ) -> bool {
+        if tag.validate(self.animation.frames.len()).is_err()
+            || self.animation.tags.get(index) == Some(&tag)
+        {
+            return false;
+        }
+        let Some(existing) = self.animation.tags.get_mut(index) else {
+            return false;
+        };
+        *existing = tag;
+        self.mark_dirty();
+        true
+    }
+
+    pub fn remove_animation_tag(&mut self, index: usize) -> bool {
+        if index >= self.animation.tags.len() {
+            return false;
+        }
+        self.animation.tags.remove(index);
+        self.mark_dirty();
+        true
+    }
     /// Changes the shared animation rate and records it as a project edit.
     pub fn set_animation_fps(&mut self, fps: u32) {
         self.animation.set_fps(fps);
@@ -234,10 +375,38 @@ impl EditorState {
         self.reset_saved_revision();
     }
 
-    /// Stops playback and loads frame zero without changing frame zero's data.
-    pub fn stop_animation(&mut self) {
+    /// Clears state that is meaningful only for the project instance being
+    /// replaced. App-level replacement calls this for every source so even an
+    /// `EditorState` supplied by a future loader cannot carry runtime history,
+    /// selections, clipboards, or playback into the active project.
+    pub(crate) fn reset_runtime_state_for_replacement(&mut self) {
         self.animation.stop();
-        self.select_frame(0);
+        self.history.clear();
+        self.selection = Selection::new();
+        self.clipboard = None;
+        self.frame_clipboard = None;
+    }
+
+    /// Stops playback and loads frame zero without changing frame zero's data.
+    pub fn stop_animation(&mut self) -> bool {
+        let displayed_before = self.animation.current_frame_index;
+        let selected_before = self.animation.selected_frame_index();
+        self.animation.stop();
+        let selection_changed = selected_before != 0;
+        if selection_changed {
+            let changed = self.animation.select_frame(0);
+            debug_assert!(
+                changed,
+                "a nonzero editing selection must move to frame zero"
+            );
+            self.mark_dirty();
+        }
+
+        let frame_changed = displayed_before != 0 || selection_changed;
+        if frame_changed {
+            self.clear_active_frame_runtime();
+        }
+        frame_changed
     }
 
     /// Returns whether the project has changes that have not been saved to a
@@ -323,6 +492,116 @@ impl EditorState {
         }
     }
 
+    /// Resizes every animation frame as one persisted project mutation.
+    pub fn resize_animation(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> Result<bool, crate::document::LayerError> {
+        if self
+            .animation
+            .frames
+            .iter()
+            .all(|frame| frame.document.width == width && frame.document.height == height)
+        {
+            return Ok(false);
+        }
+
+        self.animation.try_resize(width, height)?;
+        self.pause_animation_for_editing();
+        self.history.clear();
+        self.selection.deselect();
+        self.mark_dirty();
+        Ok(true)
+    }
+
+    /// Adds the same empty layer to every frame so animation layer topology
+    /// remains aligned. The operation intentionally clears frame-local history.
+    pub fn add_layer_all_frames(&mut self) -> bool {
+        if self
+            .animation
+            .frames
+            .iter()
+            .any(|frame| frame.document.layers.len() >= crate::document::MAX_LAYERS_PER_FRAME)
+        {
+            return false;
+        }
+        let layer_count = self.document().layers.len();
+        let name = format!("Layer {}", layer_count + 1);
+        let width = self.document().width;
+        let height = self.document().height;
+
+        self.pause_animation_for_editing();
+        for frame in &mut self.animation.frames {
+            frame
+                .document
+                .layers
+                .push(Layer::new(name.clone(), width, height));
+        }
+        self.animation.current_doc_mut().active_layer_index = layer_count;
+        self.history.clear();
+        self.mark_dirty();
+        true
+    }
+
+    /// Duplicates the selected layer in every frame where it exists.
+    pub fn duplicate_active_layer_all_frames(&mut self) -> bool {
+        if self
+            .animation
+            .frames
+            .iter()
+            .any(|frame| frame.document.layers.len() >= crate::document::MAX_LAYERS_PER_FRAME)
+        {
+            return false;
+        }
+        let active = self.document().active_layer_index;
+        self.pause_animation_for_editing();
+        let mut changed = false;
+        for frame in &mut self.animation.frames {
+            if let Some(layer) = frame.document.layers.get(active).cloned() {
+                let mut copy = layer;
+                copy.name = format!("{} copy", copy.name);
+                frame.document.layers.insert(active + 1, copy);
+                changed = true;
+            }
+        }
+        if !changed {
+            return false;
+        }
+
+        self.animation.current_doc_mut().active_layer_index = active + 1;
+        self.history.clear();
+        self.mark_dirty();
+        true
+    }
+
+    /// Removes the selected layer from every frame where it exists.
+    pub fn remove_active_layer_all_frames(&mut self) -> bool {
+        let active = self.document().active_layer_index;
+        if self.document().layers.len() <= 1 {
+            return false;
+        }
+
+        self.pause_animation_for_editing();
+        let mut changed = false;
+        for frame in &mut self.animation.frames {
+            if frame.document.layers.len() > 1 && active < frame.document.layers.len() {
+                frame.document.layers.remove(active);
+                if frame.document.active_layer_index >= frame.document.layers.len() {
+                    frame.document.active_layer_index = frame.document.layers.len() - 1;
+                }
+                changed = true;
+            }
+        }
+        if !changed {
+            return false;
+        }
+
+        self.history.clear();
+        self.mark_dirty();
+        true
+    }
+
     /// Applies one structural edit to the selected frame and records a
     /// document snapshot only when the closure reports that it changed data.
     ///
@@ -335,6 +614,7 @@ impl EditorState {
         description: impl Into<String>,
         mutation: impl FnOnce(&mut Document) -> bool,
     ) -> bool {
+        self.pause_animation_for_editing();
         let before = self.document().clone();
         let changed = mutation(self.animation.current_doc_mut());
         if !changed {
@@ -356,6 +636,7 @@ impl EditorState {
     /// This method exists to avoid borrow-checker issues when calling
     /// history.push(&mut document) since both are fields of EditorState.
     pub fn push_command(&mut self, command: Box<dyn Command>) {
+        self.pause_animation_for_editing();
         let (history, animation) = (&mut self.history, &mut self.animation);
         history.push(command, animation.current_doc_mut());
         self.mark_dirty();
@@ -368,6 +649,7 @@ impl EditorState {
             return false;
         }
 
+        self.pause_animation_for_editing();
         let (history, animation) = (&mut self.history, &mut self.animation);
         history.undo(animation.current_doc_mut());
         self.mark_dirty();
@@ -381,6 +663,7 @@ impl EditorState {
             return false;
         }
 
+        self.pause_animation_for_editing();
         let (history, animation) = (&mut self.history, &mut self.animation);
         history.redo(animation.current_doc_mut());
         self.mark_dirty();
@@ -393,6 +676,7 @@ impl EditorState {
             return false;
         }
 
+        self.pause_animation_for_editing();
         let (history, animation) = (&mut self.history, &mut self.animation);
         history.jump_to_undo_index(target_idx, animation.current_doc_mut());
         self.mark_dirty();
@@ -454,6 +738,87 @@ mod tests {
         assert_eq!(
             editor.document().active_layer().canvas.get_pixel(1, 1),
             [1, 2, 3, 255]
+        );
+    }
+
+    #[test]
+    fn switching_frames_discards_cross_frame_history_without_touching_pixels() {
+        let mut editor = EditorState::new(1, 1);
+        editor.add_frame();
+        assert!(editor.select_frame(0));
+
+        assert!(editor.mutate_document("Paint red", |document| {
+            document
+                .active_layer_mut()
+                .canvas
+                .set_pixel(0, 0, [255, 0, 0, 255]);
+            true
+        }));
+        assert!(editor.mutate_document("Paint blue", |document| {
+            document
+                .active_layer_mut()
+                .canvas
+                .set_pixel(0, 0, [0, 0, 255, 255]);
+            true
+        }));
+        assert!(editor.undo());
+        assert!(editor.history.can_undo());
+        assert!(editor.history.can_redo());
+        editor.selection.set_rect(0, 0, 0, 0);
+
+        assert!(editor.select_frame(1));
+
+        assert!(!editor.history.can_undo());
+        assert!(!editor.history.can_redo());
+        assert!(!editor.selection.active);
+        assert!(!editor.undo());
+        assert!(!editor.redo());
+        assert_eq!(
+            editor.document().active_layer().canvas.get_pixel(0, 0),
+            [0, 0, 0, 0]
+        );
+
+        assert!(editor.select_frame(0));
+        assert_eq!(
+            editor.document().active_layer().canvas.get_pixel(0, 0),
+            [255, 0, 0, 255]
+        );
+    }
+
+    #[test]
+    fn same_or_invalid_frame_selection_is_a_complete_no_op() {
+        let mut editor = EditorState::new(2, 2);
+        assert!(editor.mutate_document("Rename once", |document| {
+            document.active_layer_mut().name = "Ink".to_owned();
+            true
+        }));
+        assert!(editor.mutate_document("Rename twice", |document| {
+            document.active_layer_mut().name = "Linework".to_owned();
+            true
+        }));
+        assert!(editor.undo());
+        editor.selection.set_rect(0, 0, 1, 1);
+        editor.mark_saved();
+
+        let before_revision = editor.revision();
+        let before_undo = editor.history.undo_descriptions();
+        let before_redo = editor.history.redo_descriptions();
+        let before = crate::io::project::encode_editor_bytes(&editor)
+            .expect("the editor should encode before a no-op selection");
+
+        assert!(!editor.select_frame(0));
+        assert!(!editor.select_frame(1));
+
+        assert_eq!(editor.animation.current_frame_index, 0);
+        assert_eq!(editor.revision(), before_revision);
+        assert!(!editor.is_dirty());
+        assert!(editor.selection.active);
+        assert_eq!(editor.history.undo_descriptions(), before_undo);
+        assert_eq!(editor.history.redo_descriptions(), before_redo);
+        assert_eq!(
+            crate::io::project::encode_editor_bytes(&editor)
+                .expect("the editor should encode after a no-op selection"),
+            before
         );
     }
 
