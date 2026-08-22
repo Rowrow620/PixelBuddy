@@ -14,6 +14,10 @@ pub enum EffectType {
     InvertColors,
     Desaturation,
     Posterize,
+    Palettize,
+    Outline,
+    DropShadow,
+    Pixelize,
 }
 
 pub struct ActiveEffectState {
@@ -34,6 +38,14 @@ pub struct ActiveEffectState {
 
     pub rotate_angle: f32,
     pub posterize_levels: u8,
+    pub palettize_policy: crate::app::PalettePolicy,
+    pub outline_color: [u8; 4],
+    pub outline_thickness: u32,
+    pub drop_shadow_color: [u8; 4],
+    pub drop_shadow_offset_x: i32,
+    pub drop_shadow_offset_y: i32,
+    pub drop_shadow_opacity: f32,
+    pub pixelize_size: u32,
     preview_dirty: bool,
     last_preview_refresh_at: f64,
 }
@@ -55,6 +67,14 @@ impl ActiveEffectState {
             mirror_vertical: false,
             rotate_angle: 0.0,
             posterize_levels: 4,
+            palettize_policy: crate::app::PalettePolicy::KeepCurrent,
+            outline_color: [0, 0, 0, 255],
+            outline_thickness: 1,
+            drop_shadow_color: [0, 0, 0, 255],
+            drop_shadow_offset_x: 2,
+            drop_shadow_offset_y: 2,
+            drop_shadow_opacity: 0.5,
+            pixelize_size: 4,
             preview_dirty: false,
             last_preview_refresh_at: 0.0,
         }
@@ -302,6 +322,198 @@ impl ActiveEffectState {
                     }
                 }
             }
+            EffectType::Palettize => {
+                let target_palette = match &self.palettize_policy {
+                    crate::app::PalettePolicy::KeepCurrent => self.original_document.palette.colors.clone(),
+                    crate::app::PalettePolicy::UseDefault => crate::document::palette_library::default_preset().to_palette().colors,
+                    crate::app::PalettePolicy::UsePreset(id) => crate::document::palette_library::get_preset(id).unwrap_or_else(|| crate::document::palette_library::default_preset()).to_palette().colors,
+                };
+                
+                target.palette.colors = target_palette.clone();
+                
+                for y in 0..height {
+                    for x in 0..width {
+                        if selection.active && !selection.contains(x as i32, y as i32) {
+                            continue;
+                        }
+                        let p = src_layer.canvas.get_pixel(x, y);
+                        if p[3] > 0 {
+                            let mut best_color = p;
+                            let mut best_dist = f32::MAX;
+                            for &c in &target_palette {
+                                let dr = p[0] as f32 - c[0] as f32;
+                                let dg = p[1] as f32 - c[1] as f32;
+                                let db = p[2] as f32 - c[2] as f32;
+                                let dist = dr * dr + dg * dg + db * db;
+                                if dist < best_dist {
+                                    best_dist = dist;
+                                    best_color = [c[0], c[1], c[2], p[3]];
+                                }
+                            }
+                            dst_layer.canvas.set_pixel(x, y, best_color);
+                        }
+                    }
+                }
+            }
+            EffectType::Outline => {
+                let color = self.outline_color;
+                let thickness = self.outline_thickness as i32;
+                
+                // Copy original pixels first
+                for y in 0..height {
+                    for x in 0..width {
+                        if selection.active && !selection.contains(x as i32, y as i32) {
+                            continue;
+                        }
+                        let p = src_layer.canvas.get_pixel(x, y);
+                        dst_layer.canvas.set_pixel(x, y, p);
+                    }
+                }
+                
+                // Add outline
+                if color[3] > 0 && thickness > 0 {
+                    for y in 0..height as i32 {
+                        for x in 0..width as i32 {
+                            if selection.active && !selection.contains(x, y) {
+                                continue;
+                            }
+                            
+                            let p = src_layer.canvas.get_pixel(x as u32, y as u32);
+                            if p[3] == 0 {
+                                // Transparent pixel. Check if it's within 'thickness' distance of an opaque pixel.
+                                // For an outline, we typically use a diamond pattern (Manhattan distance) or square pattern (Chebyshev).
+                                // Let's use Chebyshev (square) for simple thick outlines, or Manhattan for pixel art outlines.
+                                // A common pixel art outline is just 1px (Manhattan).
+                                let mut is_edge = false;
+                                'search: for dy in -thickness..=thickness {
+                                    for dx in -thickness..=thickness {
+                                        if dx.abs() + dy.abs() > thickness {
+                                            continue; // Manhattan distance
+                                        }
+                                        let nx = x + dx;
+                                        let ny = y + dy;
+                                        if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
+                                            if src_layer.canvas.get_pixel(nx as u32, ny as u32)[3] > 0 {
+                                                is_edge = true;
+                                                break 'search;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                if is_edge {
+                                    dst_layer.canvas.set_pixel(x as u32, y as u32, color);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            EffectType::DropShadow => {
+                let color = self.drop_shadow_color;
+                let ox = self.drop_shadow_offset_x;
+                let oy = self.drop_shadow_offset_y;
+                let opacity = self.drop_shadow_opacity.clamp(0.0, 1.0);
+                
+                // We will composite the original on top of the shadow.
+                for y in 0..height as i32 {
+                    for x in 0..width as i32 {
+                        if selection.active && !selection.contains(x, y) {
+                            continue;
+                        }
+                        
+                        let original = src_layer.canvas.get_pixel(x as u32, y as u32);
+                        
+                        // Check if shadow falls here
+                        let sx = x - ox;
+                        let sy = y - oy;
+                        
+                        let shadow_p = if sx >= 0 && sx < width as i32 && sy >= 0 && sy < height as i32 {
+                            src_layer.canvas.get_pixel(sx as u32, sy as u32)
+                        } else {
+                            [0, 0, 0, 0]
+                        };
+                        
+                        if original[3] == 0 && shadow_p[3] > 0 {
+                            // Empty pixel, but shadow falls here
+                            let out_alpha = (shadow_p[3] as f32 * opacity) as u8;
+                            let out_color = [color[0], color[1], color[2], out_alpha];
+                            dst_layer.canvas.set_pixel(x as u32, y as u32, out_color);
+                        } else if original[3] > 0 && shadow_p[3] > 0 && original[3] < 255 {
+                            // Transparent original, composite original OVER shadow
+                            let shadow_alpha = (shadow_p[3] as f32 * opacity) as u8;
+                            let shadow_color = [color[0], color[1], color[2], shadow_alpha];
+                            
+                            // Blend original over shadow
+                            // (Using a simple alpha blend)
+                            let alpha_out = original[3] as f32 + shadow_alpha as f32 * (255.0 - original[3] as f32) / 255.0;
+                            if alpha_out > 0.0 {
+                                let r = (original[0] as f32 * original[3] as f32 + shadow_color[0] as f32 * shadow_alpha as f32 * (255.0 - original[3] as f32) / 255.0) / alpha_out;
+                                let g = (original[1] as f32 * original[3] as f32 + shadow_color[1] as f32 * shadow_alpha as f32 * (255.0 - original[3] as f32) / 255.0) / alpha_out;
+                                let b = (original[2] as f32 * original[3] as f32 + shadow_color[2] as f32 * shadow_alpha as f32 * (255.0 - original[3] as f32) / 255.0) / alpha_out;
+                                dst_layer.canvas.set_pixel(x as u32, y as u32, [r as u8, g as u8, b as u8, alpha_out as u8]);
+                            } else {
+                                dst_layer.canvas.set_pixel(x as u32, y as u32, [0, 0, 0, 0]);
+                            }
+                        } else {
+                            // Opaque original, or no shadow
+                            dst_layer.canvas.set_pixel(x as u32, y as u32, original);
+                        }
+                    }
+                }
+            }
+            EffectType::Pixelize => {
+                let size = self.pixelize_size.max(1);
+                if size == 1 {
+                    for y in 0..height {
+                        for x in 0..width {
+                            if selection.active && !selection.contains(x as i32, y as i32) {
+                                continue;
+                            }
+                            dst_layer.canvas.set_pixel(x, y, src_layer.canvas.get_pixel(x, y));
+                        }
+                    }
+                } else {
+                    for by in (0..height).step_by(size as usize) {
+                        for bx in (0..width).step_by(size as usize) {
+                            // Find the center pixel of this block to use as the color (or could average)
+                            // We will just sample the top-left or center pixel that is opaque, or average.
+                            // Average is better:
+                            let mut r = 0u32;
+                            let mut g = 0u32;
+                            let mut b = 0u32;
+                            let mut a = 0u32;
+                            let mut count = 0;
+                            
+                            for y in by..std::cmp::min(by + size, height) {
+                                for x in bx..std::cmp::min(bx + size, width) {
+                                    let p = src_layer.canvas.get_pixel(x, y);
+                                    r += p[0] as u32;
+                                    g += p[1] as u32;
+                                    b += p[2] as u32;
+                                    a += p[3] as u32;
+                                    count += 1;
+                                }
+                            }
+                            
+                            let avg = if count > 0 {
+                                [(r / count) as u8, (g / count) as u8, (b / count) as u8, (a / count) as u8]
+                            } else {
+                                [0, 0, 0, 0]
+                            };
+                            
+                            for y in by..std::cmp::min(by + size, height) {
+                                for x in bx..std::cmp::min(bx + size, width) {
+                                    if selection.active && !selection.contains(x as i32, y as i32) {
+                                        continue;
+                                    }
+                                    dst_layer.canvas.set_pixel(x, y, avg);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -460,6 +672,10 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
             EffectType::InvertColors => "Invert Colors",
             EffectType::Desaturation => "Desaturation",
             EffectType::Posterize => "Posterize",
+            EffectType::Palettize => "Palettize",
+            EffectType::Outline => "Outline",
+            EffectType::DropShadow => "Drop Shadow",
+            EffectType::Pixelize => "Pixelize",
         };
 
         egui::Window::new(title)
@@ -589,6 +805,79 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                             effect_changed = true;
                         }
                     }
+                    EffectType::Palettize => {
+                        ui.horizontal(|ui| {
+                            ui.label("Palette:");
+                            let previous_policy = effect.palettize_policy.clone();
+                            egui::ComboBox::from_id_salt("palettize_policy")
+                                .selected_text(match &effect.palettize_policy {
+                                    crate::app::PalettePolicy::KeepCurrent => "Keep current palette".to_owned(),
+                                    crate::app::PalettePolicy::UseDefault => "Use default palette".to_owned(),
+                                    crate::app::PalettePolicy::UsePreset(id) => crate::document::palette_library::get_preset(id)
+                                        .map(|p| p.name.to_owned())
+                                        .unwrap_or_else(|| "Unknown preset".to_owned()),
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut effect.palettize_policy,
+                                        crate::app::PalettePolicy::KeepCurrent,
+                                        "Keep current palette",
+                                    );
+                                    ui.selectable_value(
+                                        &mut effect.palettize_policy,
+                                        crate::app::PalettePolicy::UseDefault,
+                                        "Use default palette",
+                                    );
+                                    for preset in crate::document::palette_library::PRESETS {
+                                        ui.selectable_value(
+                                            &mut effect.palettize_policy,
+                                            crate::app::PalettePolicy::UsePreset(preset.id.to_string()),
+                                            preset.name,
+                                        );
+                                    }
+                                });
+                            if previous_policy != effect.palettize_policy {
+                                effect_changed = true;
+                            }
+                        });
+                    }
+                    EffectType::Outline => {
+                        ui.horizontal(|ui| {
+                            ui.label("Color:");
+                            let mut c = [effect.outline_color[0], effect.outline_color[1], effect.outline_color[2]];
+                            if ui.color_edit_button_srgb(&mut c).changed() {
+                                effect.outline_color = [c[0], c[1], c[2], 255];
+                                effect_changed = true;
+                            }
+                        });
+                        if ui.add(egui::Slider::new(&mut effect.outline_thickness, 1..=10).text("Thickness")).changed() {
+                            effect_changed = true;
+                        }
+                    }
+                    EffectType::DropShadow => {
+                        ui.horizontal(|ui| {
+                            ui.label("Color:");
+                            let mut c = [effect.drop_shadow_color[0], effect.drop_shadow_color[1], effect.drop_shadow_color[2]];
+                            if ui.color_edit_button_srgb(&mut c).changed() {
+                                effect.drop_shadow_color = [c[0], c[1], c[2], 255];
+                                effect_changed = true;
+                            }
+                        });
+                        if ui.add(egui::Slider::new(&mut effect.drop_shadow_offset_x, -50..=50).text("Offset X")).changed() {
+                            effect_changed = true;
+                        }
+                        if ui.add(egui::Slider::new(&mut effect.drop_shadow_offset_y, -50..=50).text("Offset Y")).changed() {
+                            effect_changed = true;
+                        }
+                        if ui.add(egui::Slider::new(&mut effect.drop_shadow_opacity, 0.0..=1.0).text("Opacity")).changed() {
+                            effect_changed = true;
+                        }
+                    }
+                    EffectType::Pixelize => {
+                        if ui.add(egui::Slider::new(&mut effect.pixelize_size, 1..=64).text("Block Size")).changed() {
+                            effect_changed = true;
+                        }
+                    }
                 }
 
                 ui.separator();
@@ -653,6 +942,10 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                 EffectType::InvertColors => "Invert Colors",
                 EffectType::Desaturation => "Desaturation",
                 EffectType::Posterize => "Posterize",
+                EffectType::Palettize => "Palettize",
+                EffectType::Outline => "Outline",
+                EffectType::DropShadow => "Drop Shadow",
+                EffectType::Pixelize => "Pixelize",
             };
 
             if let Some(preview) = effect.preview_document {
