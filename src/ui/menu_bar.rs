@@ -312,6 +312,22 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         app.start_effect(crate::effects::EffectType::Posterize);
                         ui.close_menu();
                     }
+                    if ui.button("Palettize...").clicked() {
+                        app.start_effect(crate::effects::EffectType::Palettize);
+                        ui.close_menu();
+                    }
+                    if ui.button("Outline...").clicked() {
+                        app.start_effect(crate::effects::EffectType::Outline);
+                        ui.close_menu();
+                    }
+                    if ui.button("Drop Shadow...").clicked() {
+                        app.start_effect(crate::effects::EffectType::DropShadow);
+                        ui.close_menu();
+                    }
+                    if ui.button("Pixelize...").clicked() {
+                        app.start_effect(crate::effects::EffectType::Pixelize);
+                        ui.close_menu();
+                    }
                 });
 
                 ui.menu_button("Settings", |ui| {
