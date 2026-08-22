@@ -585,12 +585,21 @@ impl PixelBuddyApp {
 
     /// Queues a new document, asking before it would replace unsaved work.
     pub fn request_new_document(&mut self, width: u32, height: u32, palette_policy: PalettePolicy) {
-        self.request_document_replacement(DocumentReplacement::NewDocument { width, height, palette_policy });
+        self.request_document_replacement(DocumentReplacement::NewDocument {
+            width,
+            height,
+            palette_policy,
+        });
     }
 
     /// Queues a flattened imported image, asking before it would replace
     /// unsaved editable project data.
-    pub fn request_imported_image(&mut self, document: Document, file_name: String, palette_policy: PalettePolicy) {
+    pub fn request_imported_image(
+        &mut self,
+        document: Document,
+        file_name: String,
+        palette_policy: PalettePolicy,
+    ) {
         self.request_document_replacement(DocumentReplacement::ImportedImage {
             document,
             file_name,
@@ -642,17 +651,19 @@ impl PixelBuddyApp {
 
     fn apply_palette_policy(&mut self, policy: &PalettePolicy) {
         match policy {
-            PalettePolicy::KeepCurrent => { /* do nothing */ },
+            PalettePolicy::KeepCurrent => { /* do nothing */ }
             PalettePolicy::UseDefault => {
-                self.editor.animation.current_doc_mut().palette = crate::document::palette_library::default_preset().to_palette();
-            },
+                self.editor.animation.current_doc_mut().palette =
+                    crate::document::palette_library::default_preset().to_palette();
+            }
             PalettePolicy::UsePreset(id) => {
                 if let Some(preset) = crate::document::palette_library::get_preset(id) {
                     self.editor.animation.current_doc_mut().palette = preset.to_palette();
                 } else {
-                    self.editor.animation.current_doc_mut().palette = crate::document::palette_library::default_preset().to_palette();
+                    self.editor.animation.current_doc_mut().palette =
+                        crate::document::palette_library::default_preset().to_palette();
                 }
-            },
+            }
         }
     }
 
@@ -668,7 +679,11 @@ impl PixelBuddyApp {
 
     fn commit_document_replacement(&mut self, replacement: DocumentReplacement) {
         let (status_message, should_be_dirty, show_timeline) = match replacement {
-            DocumentReplacement::NewDocument { width, height, palette_policy } => {
+            DocumentReplacement::NewDocument {
+                width,
+                height,
+                palette_policy,
+            } => {
                 self.editor = EditorState::new(width, height);
                 self.apply_palette_policy(&palette_policy);
                 ("Created a new project".to_owned(), false, false)
@@ -778,7 +793,7 @@ impl PixelBuddyApp {
 
     pub fn start_effect(&mut self, effect_type: crate::effects::EffectType) {
         let mut effect = crate::effects::ActiveEffectState::new(effect_type, &self.editor);
-        let selection = self.editor.selection.clone();
+        let selection = self.editor.selection;
         effect.refresh_preview(&selection);
         self.active_effect = Some(effect);
         self.texture_dirty = true;
@@ -2586,7 +2601,11 @@ impl eframe::App for PixelBuddyApp {
                             ) {
                                 match Self::can_create_canvas(w, h) {
                                     Ok(()) => {
-                                        self.request_new_document(w, h, self.new_project_palette_policy.clone());
+                                        self.request_new_document(
+                                            w,
+                                            h,
+                                            self.new_project_palette_policy.clone(),
+                                        );
                                         self.new_document_error = None;
                                         self.show_new_dialog = false;
                                     }

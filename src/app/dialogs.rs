@@ -1,7 +1,6 @@
 use super::*;
 
 impl PixelBuddyApp {
-
     pub(super) fn draw_palette_policy_selector(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("Palette:");
@@ -9,9 +8,11 @@ impl PixelBuddyApp {
                 .selected_text(match &self.new_project_palette_policy {
                     PalettePolicy::KeepCurrent => "Keep current palette".to_owned(),
                     PalettePolicy::UseDefault => "Use default palette".to_owned(),
-                    PalettePolicy::UsePreset(id) => crate::document::palette_library::get_preset(id)
-                        .map(|p| p.name.to_owned())
-                        .unwrap_or_else(|| "Unknown preset".to_owned()),
+                    PalettePolicy::UsePreset(id) => {
+                        crate::document::palette_library::get_preset(id)
+                            .map(|p| p.name.to_owned())
+                            .unwrap_or_else(|| "Unknown preset".to_owned())
+                    }
                 })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(
@@ -158,39 +159,46 @@ impl PixelBuddyApp {
                 ui.label("This action will replace your current project.");
                 ui.label("Save the project first if you want to keep its latest changes.");
                 ui.add_space(8.0);
-                
+
                 let palette_policy = match self.pending_replacement.as_ref().unwrap() {
                     DocumentReplacement::NewDocument { palette_policy, .. } => Some(palette_policy),
-                    DocumentReplacement::ImportedImage { palette_policy, .. } => Some(palette_policy),
-                    DocumentReplacement::ImportedAnimation { palette_policy, .. } => Some(palette_policy),
+                    DocumentReplacement::ImportedImage { palette_policy, .. } => {
+                        Some(palette_policy)
+                    }
+                    DocumentReplacement::ImportedAnimation { palette_policy, .. } => {
+                        Some(palette_policy)
+                    }
                     _ => None,
                 };
-                
+
                 if let Some(policy) = palette_policy {
                     let (name, colors) = match policy {
-                        PalettePolicy::KeepCurrent => {
-                            ("Keeping current palette".to_owned(), self.editor.document().palette.colors.clone())
-                        },
+                        PalettePolicy::KeepCurrent => (
+                            "Keeping current palette".to_owned(),
+                            self.editor.document().palette.colors.clone(),
+                        ),
                         PalettePolicy::UseDefault => {
                             let p = crate::document::palette_library::default_preset();
-                            (p.name.to_owned(), p.colors.iter().copied().collect())
-                        },
+                            (p.name.to_owned(), p.colors.to_vec())
+                        }
                         PalettePolicy::UsePreset(id) => {
                             if let Some(p) = crate::document::palette_library::get_preset(id) {
-                                (p.name.to_owned(), p.colors.iter().copied().collect())
+                                (p.name.to_owned(), p.colors.to_vec())
                             } else {
                                 let p = crate::document::palette_library::default_preset();
-                                (p.name.to_owned(), p.colors.iter().copied().collect())
+                                (p.name.to_owned(), p.colors.to_vec())
                             }
                         }
                     };
-                    
+
                     ui.label(egui::RichText::new(format!("Applying Palette: {}", name)).strong());
                     ui.horizontal(|ui| {
                         let swatch_size = egui::Vec2::splat(12.0);
                         for &c in colors.iter().take(16) {
-                            let color = egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
-                            let (rect, _response) = ui.allocate_exact_size(swatch_size, egui::Sense::hover());
+                            let color =
+                                egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
+                            let (rect, _response) =
+                                ui.allocate_exact_size(swatch_size, egui::Sense::hover());
                             ui.painter().rect_filled(rect, 0.0, color);
                         }
                         if colors.len() > 16 {
@@ -223,7 +231,6 @@ impl PixelBuddyApp {
         }
     }
 
-
     fn show_image_import_dialog_ui(&mut self, ctx: &egui::Context) {
         if !self.show_image_import_dialog {
             return;
@@ -239,9 +246,7 @@ impl PixelBuddyApp {
             .show(ctx, |ui| {
                 ui.label(format!(
                     "File: {}",
-                    self.image_import_file_name
-                        .as_deref()
-                        .unwrap_or("Unknown")
+                    self.image_import_file_name.as_deref().unwrap_or("Unknown")
                 ));
                 ui.add_space(8.0);
 
@@ -407,7 +412,11 @@ impl PixelBuddyApp {
                                 self.spritesheet_import_source_frame_generation = None;
                                 self.spritesheet_import_source_active_layer_index = None;
                                 self.spritesheet_import_texture = None;
-                                self.request_imported_animation(animation, file_name, self.new_project_palette_policy.clone());
+                                self.request_imported_animation(
+                                    animation,
+                                    file_name,
+                                    self.new_project_palette_policy.clone(),
+                                );
                             }
                             SpriteSheetImportMode::AppendFrames => {
                                 let doc_width = self.editor.document().width;
