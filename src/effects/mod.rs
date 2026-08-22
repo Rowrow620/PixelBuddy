@@ -24,9 +24,17 @@ pub enum EffectType {
     GradientMap,
 }
 
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EffectTarget {
+    ActiveLayer,
+    Selection,
+}
+
 pub struct ActiveEffectState {
     pub effect_type: EffectType,
     pub original_document: Box<Document>,
+    pub target: EffectTarget,
     pub preview_document: Option<Box<Document>>,
 
     // Effect-specific parameters
@@ -57,9 +65,11 @@ pub struct ActiveEffectState {
 
 impl ActiveEffectState {
     pub fn new(effect_type: EffectType, editor: &EditorState) -> Self {
+        let target = if editor.selection.active { EffectTarget::Selection } else { EffectTarget::ActiveLayer };
         let original_document = Box::new(editor.document().clone());
         let preview_document = original_document.clone();
         Self {
+            target,
             effect_type,
             original_document,
             preview_document: Some(preview_document),
@@ -143,7 +153,7 @@ impl ActiveEffectState {
 
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             continue;
                         }
                         let p = src_layer.canvas.get_pixel(x, y);
@@ -204,7 +214,7 @@ impl ActiveEffectState {
                 }
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             if selection.active {
                                 dst_layer
                                     .canvas
@@ -231,7 +241,7 @@ impl ActiveEffectState {
                 dst_layer.canvas.clear([0, 0, 0, 0]);
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             dst_layer
                                 .canvas
                                 .set_pixel(x, y, src_layer.canvas.get_pixel(x, y));
@@ -258,7 +268,7 @@ impl ActiveEffectState {
                 dst_layer.canvas.clear([0, 0, 0, 0]);
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             dst_layer
                                 .canvas
                                 .set_pixel(x, y, src_layer.canvas.get_pixel(x, y));
@@ -280,7 +290,7 @@ impl ActiveEffectState {
             EffectType::InvertColors => {
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             continue;
                         }
                         let p = src_layer.canvas.get_pixel(x, y);
@@ -297,7 +307,7 @@ impl ActiveEffectState {
             EffectType::Desaturation => {
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             continue;
                         }
                         let p = src_layer.canvas.get_pixel(x, y);
@@ -315,7 +325,7 @@ impl ActiveEffectState {
                 let step = 255.0 / (levels - 1.0);
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             continue;
                         }
                         let p = src_layer.canvas.get_pixel(x, y);
@@ -350,7 +360,7 @@ impl ActiveEffectState {
 
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             continue;
                         }
                         let p = src_layer.canvas.get_pixel(x, y);
@@ -379,7 +389,7 @@ impl ActiveEffectState {
                 // Copy original pixels first
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             continue;
                         }
                         let p = src_layer.canvas.get_pixel(x, y);
@@ -508,7 +518,7 @@ impl ActiveEffectState {
                 if size == 1 {
                     for y in 0..height {
                         for x in 0..width {
-                            if selection.active && !selection.contains(x as i32, y as i32) {
+                            if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                                 continue;
                             }
                             dst_layer
@@ -552,7 +562,7 @@ impl ActiveEffectState {
 
                             for y in by..std::cmp::min(by + size, height) {
                                 for x in bx..std::cmp::min(bx + size, width) {
-                                    if selection.active && !selection.contains(x as i32, y as i32) {
+                                    if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                                         continue;
                                     }
                                     dst_layer.canvas.set_pixel(x, y, avg);
@@ -585,7 +595,7 @@ impl ActiveEffectState {
 
                 for y in 0..height {
                     for x in 0..width {
-                        if selection.active && !selection.contains(x as i32, y as i32) {
+                        if self.target == EffectTarget::Selection && selection.active && !selection.contains(x as i32, y as i32) {
                             continue;
                         }
 
@@ -1728,5 +1738,107 @@ mod tests {
         assert!(effect_preview_refresh_due(1.0, 1.04, true));
         assert!(effect_preview_refresh_due(1.0, 1.001, false));
         assert!(effect_preview_refresh_due(2.0, 1.0, true));
+    }
+
+
+    fn commit_test_effect(app: &mut crate::app::PixelBuddyApp) {
+        let selection = app.editor.selection;
+        if let Some(effect) = &mut app.active_effect {
+            effect.refresh_if_dirty(&selection);
+        }
+        if let Some(effect) = app.active_effect.take() {
+            if let Some(preview) = effect.preview_document {
+                app.editor.mutate_document("Test", move |doc| {
+                    doc.clone_from(&preview);
+                    true
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn adjust_color_handles_negative_values_and_preserves_alpha() {
+        let mut app = crate::app::PixelBuddyApp::new(2, 1);
+        app.editor.document_mut().active_layer_mut().canvas.set_pixel(0, 0, [200, 100, 50, 128]);
+        app.editor.document_mut().active_layer_mut().canvas.set_pixel(1, 0, [0, 0, 0, 0]);
+        
+        app.start_effect(crate::effects::EffectType::AdjustColor);
+        if let Some(effect) = &mut app.active_effect {
+            effect.hue_shift = -90.0;
+            effect.saturation = -50.0;
+            effect.value = -20.0;
+            effect.preview_dirty = true;
+        }
+        commit_test_effect(&mut app);
+
+        let canvas = &app.editor.document().active_layer().canvas;
+        let p = canvas.get_pixel(0, 0);
+        assert_eq!(p[3], 128, "Alpha must be perfectly preserved");
+        assert_eq!(canvas.get_pixel(1, 0), [0, 0, 0, 0], "Transparent pixels remain transparent");
+    }
+
+    #[test]
+    fn pixelize_zero_noop_and_selection_clipping() {
+        let mut app = crate::app::PixelBuddyApp::new(2, 1);
+        app.editor.document_mut().active_layer_mut().canvas.set_pixel(0, 0, [255, 0, 0, 255]);
+        app.editor.document_mut().active_layer_mut().canvas.set_pixel(1, 0, [0, 255, 0, 255]);
+        
+        app.editor.selection.active = true;
+        app.editor.selection.x0 = 0;
+        app.editor.selection.y0 = 0;
+        app.editor.selection.x1 = 0;
+        app.editor.selection.y1 = 0;
+        
+        app.start_effect(crate::effects::EffectType::Pixelize);
+        if let Some(effect) = &mut app.active_effect {
+            effect.target = crate::effects::EffectTarget::Selection;
+            effect.pixelize_size = 4;
+            effect.preview_dirty = true;
+        }
+        commit_test_effect(&mut app);
+
+        let canvas = &app.editor.document().active_layer().canvas;
+        assert_ne!(canvas.get_pixel(0, 0), [0, 0, 0, 0]);
+        assert_eq!(canvas.get_pixel(1, 0), [0, 255, 0, 255], "Pixels outside selection remain perfectly untouched");
+    }
+
+    #[test]
+    fn gradient_fill_replace_and_alpha_blend() {
+        let mut app = crate::app::PixelBuddyApp::new(1, 1);
+        app.editor.document_mut().active_layer_mut().canvas.set_pixel(0, 0, [255, 0, 0, 128]);
+        
+        app.start_effect(crate::effects::EffectType::GradientFill);
+        if let Some(effect) = &mut app.active_effect {
+            effect.gradient.blend_mode = crate::effects::gradient::GradientBlendMode::AlphaBlend;
+            effect.gradient.shape = crate::effects::gradient::GradientShape::Linear;
+            effect.gradient.stops.clear();
+            effect.gradient.stops.push(crate::effects::gradient::GradientStop { position: 0.0, color: [0, 255, 0, 255] });
+            effect.gradient.stops.push(crate::effects::gradient::GradientStop { position: 1.0, color: [0, 255, 0, 255] });
+            effect.preview_dirty = true;
+        }
+        commit_test_effect(&mut app);
+
+        let canvas = &app.editor.document().active_layer().canvas;
+        let p = canvas.get_pixel(0, 0);
+        assert_eq!(p[1], 255, "Green gradient was alpha blended onto the canvas");
+    }
+
+    #[test]
+    fn effect_cancel_restores_document_perfectly() {
+        let mut app = crate::app::PixelBuddyApp::new(1, 1);
+        app.editor.document_mut().active_layer_mut().canvas.set_pixel(0, 0, [255, 0, 0, 128]);
+        let original = app.editor.document().active_layer().canvas.pixels().to_vec();
+        
+        app.start_effect(crate::effects::EffectType::GradientFill);
+        if let Some(effect) = &mut app.active_effect {
+            effect.preview_dirty = true;
+            let selection = app.editor.selection;
+            effect.refresh_if_dirty(&selection);
+        }
+        // simulate cancel
+        app.active_effect = None;
+
+        let restored = app.editor.document().active_layer().canvas.pixels().to_vec();
+        assert_eq!(original, restored, "Cancellation must result in a byte-for-byte identical document");
     }
 }
