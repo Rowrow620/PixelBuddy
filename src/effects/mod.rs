@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use crate::document::Document;
 use crate::editor::EditorState;
 
+pub mod gradient;
+
 const EFFECT_PREVIEW_INTERVAL_SECONDS: f64 = 1.0 / 30.0;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -18,6 +20,8 @@ pub enum EffectType {
     Outline,
     DropShadow,
     Pixelize,
+    GradientFill,
+    GradientMap,
 }
 
 pub struct ActiveEffectState {
@@ -46,6 +50,7 @@ pub struct ActiveEffectState {
     pub drop_shadow_offset_y: i32,
     pub drop_shadow_opacity: f32,
     pub pixelize_size: u32,
+    pub gradient: crate::effects::gradient::GradientState,
     preview_dirty: bool,
     last_preview_refresh_at: f64,
 }
@@ -75,6 +80,7 @@ impl ActiveEffectState {
             drop_shadow_offset_y: 2,
             drop_shadow_opacity: 0.5,
             pixelize_size: 4,
+            gradient: crate::effects::gradient::GradientState::default(),
             preview_dirty: false,
             last_preview_refresh_at: 0.0,
         }
@@ -514,6 +520,116 @@ impl ActiveEffectState {
                     }
                 }
             }
+            EffectType::GradientFill | EffectType::GradientMap => {
+                let w = width as f32;
+                let h = height as f32;
+                
+                let is_fill = self.effect_type == EffectType::GradientFill;
+                let shape = self.gradient.shape;
+                let cx = self.gradient.radial_center[0] * w;
+                let cy = self.gradient.radial_center[1] * h;
+                let rx = self.gradient.radial_radius[0] * w;
+                let ry = self.gradient.radial_radius[1] * h;
+                
+                let sx = self.gradient.linear_start[0] * w;
+                let sy = self.gradient.linear_start[1] * h;
+                let ex = self.gradient.linear_end[0] * w;
+                let ey = self.gradient.linear_end[1] * h;
+                let dx = ex - sx;
+                let dy = ey - sy;
+                let len_sq = dx * dx + dy * dy;
+
+                let blend = self.gradient.blend_mode;
+                
+                for y in 0..height {
+                    for x in 0..width {
+                        if selection.active && !selection.contains(x as i32, y as i32) {
+                            continue;
+                        }
+                        
+                        let px = x as f32;
+                        let py = y as f32;
+                        let original_pixel = src_layer.canvas.get_pixel(x, y);
+
+                        if self.gradient.target == crate::effects::gradient::GradientTarget::CurrentSelection 
+                           && selection.active && !selection.contains(x as i32, y as i32) {
+                           continue; 
+                        }
+                        
+                        // Map preserves alpha, skip fully transparent
+                        if !is_fill && original_pixel[3] == 0 {
+                            continue;
+                        }
+
+                        let mut t = 0.0;
+                        if is_fill {
+                            match shape {
+                                crate::effects::gradient::GradientShape::Linear => {
+                                    if len_sq > 0.0001 {
+                                        let vx = px - sx;
+                                        let vy = py - sy;
+                                        t = (vx * dx + vy * dy) / len_sq;
+                                    }
+                                }
+                                crate::effects::gradient::GradientShape::Radial => {
+                                    if rx > 0.0001 && ry > 0.0001 {
+                                        let nx = (px - cx) / rx;
+                                        let ny = (py - cy) / ry;
+                                        t = (nx * nx + ny * ny).sqrt();
+                                    }
+                                }
+                            }
+                        } else {
+                            let lum = (0.299 * original_pixel[0] as f32 + 0.587 * original_pixel[1] as f32 + 0.114 * original_pixel[2] as f32) / 255.0;
+                            t = lum;
+                        }
+
+                        let mut dither_offset = 0.0;
+                        match self.gradient.dithering {
+                            crate::effects::gradient::GradientDithering::None => {}
+                            crate::effects::gradient::GradientDithering::Bayer2x2 => {
+                                let bayer = [[0.0, 0.5], [0.75, 0.25]];
+                                dither_offset = bayer[(y % 2) as usize][(x % 2) as usize] - 0.375;
+                            }
+                            crate::effects::gradient::GradientDithering::Bayer4x4 => {
+                                let bayer = [
+                                    [0.0/16.0, 8.0/16.0, 2.0/16.0, 10.0/16.0],
+                                    [12.0/16.0, 4.0/16.0, 14.0/16.0, 6.0/16.0],
+                                    [3.0/16.0, 11.0/16.0, 1.0/16.0, 9.0/16.0],
+                                    [15.0/16.0, 7.0/16.0, 13.0/16.0, 5.0/16.0],
+                                ];
+                                dither_offset = bayer[(y % 4) as usize][(x % 4) as usize] - 0.46875;
+                            }
+                        }
+                        t += dither_offset * 0.05; 
+
+                        let sampled = self.gradient.sample_color(t);
+                        
+                        let out_color = if is_fill {
+                            match blend {
+                                crate::effects::gradient::GradientBlendMode::Replace => sampled,
+                                crate::effects::gradient::GradientBlendMode::AlphaBlend => {
+                                    let sa = sampled[3] as f32 / 255.0;
+                                    let oa = original_pixel[3] as f32 / 255.0;
+                                    let a_out = sa + oa * (1.0 - sa);
+                                    if a_out > 0.0 {
+                                        let r = ((sampled[0] as f32 * sa) + (original_pixel[0] as f32 * oa * (1.0 - sa))) / a_out;
+                                        let g = ((sampled[1] as f32 * sa) + (original_pixel[1] as f32 * oa * (1.0 - sa))) / a_out;
+                                        let b = ((sampled[2] as f32 * sa) + (original_pixel[2] as f32 * oa * (1.0 - sa))) / a_out;
+                                        [r as u8, g as u8, b as u8, (a_out * 255.0) as u8]
+                                    } else {
+                                        [0, 0, 0, 0]
+                                    }
+                                }
+                            }
+                        } else {
+                            [sampled[0], sampled[1], sampled[2], original_pixel[3]]
+                        };
+                        
+                        dst_layer.canvas.set_pixel(x, y, out_color);
+                    }
+                }
+            }
         }
     }
 }
@@ -676,6 +792,8 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
             EffectType::Outline => "Outline",
             EffectType::DropShadow => "Drop Shadow",
             EffectType::Pixelize => "Pixelize",
+            EffectType::GradientFill => "Gradient Fill",
+            EffectType::GradientMap => "Gradient Map",
         };
 
         egui::Window::new(title)
@@ -878,6 +996,155 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                             effect_changed = true;
                         }
                     }
+                    EffectType::GradientFill | EffectType::GradientMap => {
+                        let is_fill = effect.effect_type == EffectType::GradientFill;
+                        ui.label("Color Ramp");
+                        
+                        let mut to_remove = None;
+                        let stops_len = effect.gradient.stops.len();
+                        
+                        for (i, stop) in effect.gradient.stops.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                let mut c = egui::Color32::from_rgba_unmultiplied(stop.color[0], stop.color[1], stop.color[2], stop.color[3]);
+                                if crate::ui::layers_panel::compact_color_picker_popup(ui, &format!("grad_stop_{i}"), &mut c).changed() {
+                                    stop.color = [c.r(), c.g(), c.b(), c.a()];
+                                    effect_changed = true;
+                                }
+                                
+                                if ui.add(egui::Slider::new(&mut stop.position, 0.0..=1.0).text("Pos")).changed() {
+                                    effect_changed = true;
+                                }
+                                
+                                if stops_len > 2 {
+                                    if ui.button("X").clicked() {
+                                        to_remove = Some(i);
+                                    }
+                                }
+                            });
+                        }
+                        
+                        if let Some(i) = to_remove {
+                            effect.gradient.stops.remove(i);
+                            effect_changed = true;
+                        }
+                        
+                        ui.horizontal(|ui| {
+                            if ui.button("Add Stop").clicked() {
+                                effect.gradient.stops.push(crate::effects::gradient::GradientStop {
+                                    position: 0.5,
+                                    color: [128, 128, 128, 255],
+                                });
+                                effect_changed = true;
+                            }
+                            if ui.button("Distribute Stops").clicked() {
+                                let n = effect.gradient.stops.len();
+                                if n > 1 {
+                                    effect.gradient.stops.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
+                                    for (i, stop) in effect.gradient.stops.iter_mut().enumerate() {
+                                        stop.position = i as f32 / (n - 1) as f32;
+                                    }
+                                    effect_changed = true;
+                                }
+                            }
+                        });
+                        
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label("Interpolation:");
+                            if ui.radio_value(&mut effect.gradient.interpolation, crate::effects::gradient::GradientInterpolation::Step, "Step").changed() { effect_changed = true; }
+                            if ui.radio_value(&mut effect.gradient.interpolation, crate::effects::gradient::GradientInterpolation::Linear, "Linear").changed() { effect_changed = true; }
+                            if ui.radio_value(&mut effect.gradient.interpolation, crate::effects::gradient::GradientInterpolation::Smooth, "Smooth").changed() { effect_changed = true; }
+                        });
+                        
+                        ui.horizontal(|ui| {
+                            ui.label("Color Processing:");
+                            if ui.radio_value(&mut effect.gradient.color_space, crate::effects::gradient::GradientColorSpace::Srgb, "sRGB").changed() { effect_changed = true; }
+                            if ui.radio_value(&mut effect.gradient.color_space, crate::effects::gradient::GradientColorSpace::LinearRgb, "Linear RGB").changed() { effect_changed = true; }
+                        });
+                        
+                        ui.horizontal(|ui| {
+                            ui.label("Edge Mode:");
+                            if ui.radio_value(&mut effect.gradient.edge_mode, crate::effects::gradient::GradientEdgeMode::Clamp, "Clamp").changed() { effect_changed = true; }
+                            if ui.radio_value(&mut effect.gradient.edge_mode, crate::effects::gradient::GradientEdgeMode::Repeat, "Repeat").changed() { effect_changed = true; }
+                            if ui.radio_value(&mut effect.gradient.edge_mode, crate::effects::gradient::GradientEdgeMode::Mirror, "Mirror").changed() { effect_changed = true; }
+                        });
+                        
+                        ui.horizontal(|ui| {
+                            ui.label("Dithering:");
+                            if ui.radio_value(&mut effect.gradient.dithering, crate::effects::gradient::GradientDithering::None, "None").changed() { effect_changed = true; }
+                            if ui.radio_value(&mut effect.gradient.dithering, crate::effects::gradient::GradientDithering::Bayer2x2, "Bayer 2x2").changed() { effect_changed = true; }
+                            if ui.radio_value(&mut effect.gradient.dithering, crate::effects::gradient::GradientDithering::Bayer4x4, "Bayer 4x4").changed() { effect_changed = true; }
+                        });
+                        
+                        if is_fill {
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                ui.label("Shape:");
+                                if ui.radio_value(&mut effect.gradient.shape, crate::effects::gradient::GradientShape::Linear, "Linear").changed() { effect_changed = true; }
+                                if ui.radio_value(&mut effect.gradient.shape, crate::effects::gradient::GradientShape::Radial, "Radial").changed() { effect_changed = true; }
+                            });
+                            
+                            match effect.gradient.shape {
+                                crate::effects::gradient::GradientShape::Linear => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Start X");
+                                        if ui.add(egui::Slider::new(&mut effect.gradient.linear_start[0], 0.0..=1.0)).changed() { effect_changed = true; }
+                                        ui.label("Y");
+                                        if ui.add(egui::Slider::new(&mut effect.gradient.linear_start[1], 0.0..=1.0)).changed() { effect_changed = true; }
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("End X");
+                                        if ui.add(egui::Slider::new(&mut effect.gradient.linear_end[0], 0.0..=1.0)).changed() { effect_changed = true; }
+                                        ui.label("Y");
+                                        if ui.add(egui::Slider::new(&mut effect.gradient.linear_end[1], 0.0..=1.0)).changed() { effect_changed = true; }
+                                    });
+                                }
+                                crate::effects::gradient::GradientShape::Radial => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Center X");
+                                        if ui.add(egui::Slider::new(&mut effect.gradient.radial_center[0], 0.0..=1.0)).changed() { effect_changed = true; }
+                                        ui.label("Y");
+                                        if ui.add(egui::Slider::new(&mut effect.gradient.radial_center[1], 0.0..=1.0)).changed() { effect_changed = true; }
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Radius X");
+                                        if ui.add(egui::Slider::new(&mut effect.gradient.radial_radius[0], 0.01..=2.0)).changed() { 
+                                            if effect.gradient.radial_linked {
+                                                effect.gradient.radial_radius[1] = effect.gradient.radial_radius[0];
+                                            }
+                                            effect_changed = true; 
+                                        }
+                                        ui.label("Y");
+                                        if ui.add(egui::Slider::new(&mut effect.gradient.radial_radius[1], 0.01..=2.0)).changed() { 
+                                            if effect.gradient.radial_linked {
+                                                effect.gradient.radial_radius[0] = effect.gradient.radial_radius[1];
+                                            }
+                                            effect_changed = true; 
+                                        }
+                                    });
+                                    if ui.checkbox(&mut effect.gradient.radial_linked, "Link X/Y").changed() {
+                                        if effect.gradient.radial_linked {
+                                            effect.gradient.radial_radius[1] = effect.gradient.radial_radius[0];
+                                        }
+                                        effect_changed = true;
+                                    }
+                                }
+                            }
+                            
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                ui.label("Target:");
+                                if ui.radio_value(&mut effect.gradient.target, crate::effects::gradient::GradientTarget::ActiveLayer, "Active Layer").changed() { effect_changed = true; }
+                                if ui.radio_value(&mut effect.gradient.target, crate::effects::gradient::GradientTarget::CurrentSelection, "Selection").changed() { effect_changed = true; }
+                            });
+                            
+                            ui.horizontal(|ui| {
+                                ui.label("Blend:");
+                                if ui.radio_value(&mut effect.gradient.blend_mode, crate::effects::gradient::GradientBlendMode::Replace, "Replace").changed() { effect_changed = true; }
+                                if ui.radio_value(&mut effect.gradient.blend_mode, crate::effects::gradient::GradientBlendMode::AlphaBlend, "Alpha Blend").changed() { effect_changed = true; }
+                            });
+                        }
+                    }
                 }
 
                 ui.separator();
@@ -946,6 +1213,8 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                 EffectType::Outline => "Outline",
                 EffectType::DropShadow => "Drop Shadow",
                 EffectType::Pixelize => "Pixelize",
+                EffectType::GradientFill => "Gradient Fill",
+                EffectType::GradientMap => "Gradient Map",
             };
 
             if let Some(preview) = effect.preview_document {
