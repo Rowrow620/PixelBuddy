@@ -1,10 +1,20 @@
-use crate::app::PixelBuddyApp;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::app::WindowPresentation;
+use crate::app::{
+    PixelBuddyApp, TileMode, MAX_CANVAS_ZOOM, MAX_TILE_PREVIEW_COUNT, MIN_CANVAS_ZOOM,
+};
 use crate::io;
 
 pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
     let frame = egui::Frame::default()
         .fill(egui::Color32::from_rgb(15, 15, 25))
-        .inner_margin(egui::Margin::symmetric(8, 2));
+        // Keep title-bar controls below the six-pixel native resize strip.
+        .inner_margin(egui::Margin {
+            left: 8,
+            right: 8,
+            top: 6,
+            bottom: 2,
+        });
 
     egui::TopBottomPanel::top("menu_bar")
         .frame(frame)
@@ -20,25 +30,49 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         ui.close_menu();
                     }
                     if ui.button("Save Project (.pbud)").clicked() {
-                        io::trigger_save_project(&app.editor, app.io_handler.sender.clone());
+                        app.command_save_project_as();
                         ui.close_menu();
                     }
                     ui.separator();
                     if ui.button("Open Image (PNG/WebP)...").clicked() {
-                        io::trigger_open_file(app.io_handler.sender.clone(), true);
+                        io::trigger_open_file(
+                            app.io_handler.sender.clone(),
+                            true,
+                            app.document_session_id(),
+                            app.active_frame_generation(),
+                        );
                         ui.close_menu();
                     }
                     if ui.button("Open Sprite Sheet...").clicked() {
-                        io::trigger_open_spritesheet(app.io_handler.sender.clone(), true);
+                        io::trigger_open_spritesheet(
+                            app.io_handler.sender.clone(),
+                            true,
+                            app.document_session_id(),
+                            app.editor.revision(),
+                            app.active_frame_generation(),
+                            app.editor.document().active_layer_index,
+                        );
                         ui.close_menu();
                     }
                     ui.separator();
                     if ui.button("Import Image to Current Frame...").clicked() {
-                        io::trigger_open_file(app.io_handler.sender.clone(), false);
+                        io::trigger_open_file(
+                            app.io_handler.sender.clone(),
+                            false,
+                            app.document_session_id(),
+                            app.active_frame_generation(),
+                        );
                         ui.close_menu();
                     }
                     if ui.button("Import Sprite Sheet as New Frames...").clicked() {
-                        io::trigger_open_spritesheet(app.io_handler.sender.clone(), false);
+                        io::trigger_open_spritesheet(
+                            app.io_handler.sender.clone(),
+                            false,
+                            app.document_session_id(),
+                            app.editor.revision(),
+                            app.active_frame_generation(),
+                            app.editor.document().active_layer_index,
+                        );
                         ui.close_menu();
                     }
                     if ui.button("Export PNG...").clicked() {
@@ -61,15 +95,11 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
 
                 ui.menu_button("Edit", |ui| {
                     if ui.button("Undo (Ctrl+Z)").clicked() {
-                        if app.editor.undo() {
-                            app.texture_dirty = true;
-                        }
+                        app.undo_current_frame();
                         ui.close_menu();
                     }
                     if ui.button("Redo (Ctrl+Y)").clicked() {
-                        if app.editor.redo() {
-                            app.texture_dirty = true;
-                        }
+                        app.redo_current_frame();
                         ui.close_menu();
                     }
                     ui.separator();
@@ -141,7 +171,13 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Merge Down").clicked() {
+                    let merge_reason = app.merge_down_unavailable_reason();
+                    let merge_response = ui
+                        .add_enabled(merge_reason.is_none(), egui::Button::new("Merge Down"))
+                        .on_hover_text(merge_reason.unwrap_or(
+                            "Merge the selected layer into the layer directly below it",
+                        ));
+                    if merge_response.clicked() {
                         app.merge_down();
                         ui.close_menu();
                     }
@@ -157,17 +193,62 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                 });
 
                 ui.menu_button("View", |ui| {
-                    ui.menu_button("Tile Mode", |ui| {
-                        if ui.radio_value(&mut app.tile_mode, crate::app::TileMode::None, "None").clicked() {
-                            ui.close_menu();
+                    ui.menu_button("Tile Preview", |ui| {
+                        ui.set_min_width(220.0);
+                        ui.radio_value(&mut app.tile_mode, TileMode::None, "Off");
+                        ui.radio_value(&mut app.tile_mode, TileMode::XAxis, "Horizontal only");
+                        ui.radio_value(&mut app.tile_mode, TileMode::YAxis, "Vertical only");
+                        ui.radio_value(&mut app.tile_mode, TileMode::Both, "Both axes");
+
+                        ui.separator();
+                        let columns_enabled =
+                            matches!(app.tile_mode, TileMode::XAxis | TileMode::Both);
+                        let rows_enabled =
+                            matches!(app.tile_mode, TileMode::YAxis | TileMode::Both);
+
+                        let mut columns = app.tile_preview.columns();
+                        if ui
+                            .add_enabled(
+                                columns_enabled,
+                                egui::Slider::new(&mut columns, 1..=MAX_TILE_PREVIEW_COUNT)
+                                    .text("Columns"),
+                            )
+                            .changed()
+                        {
+                            app.tile_preview.set_columns(columns);
                         }
-                        if ui.radio_value(&mut app.tile_mode, crate::app::TileMode::Both, "Tiled In Both Axis").clicked() {
-                            ui.close_menu();
+
+                        let mut rows = app.tile_preview.rows();
+                        if ui
+                            .add_enabled(
+                                rows_enabled,
+                                egui::Slider::new(&mut rows, 1..=MAX_TILE_PREVIEW_COUNT)
+                                    .text("Rows"),
+                            )
+                            .changed()
+                        {
+                            app.tile_preview.set_rows(rows);
                         }
-                        if ui.radio_value(&mut app.tile_mode, crate::app::TileMode::XAxis, "Tiled In X Axis").clicked() {
-                            ui.close_menu();
-                        }
-                        if ui.radio_value(&mut app.tile_mode, crate::app::TileMode::YAxis, "Tiled In Y Axis").clicked() {
+
+                        let (effective_columns, effective_rows) =
+                            app.tile_preview.effective_dimensions(app.tile_mode);
+                        ui.label(format!(
+                            "Preview: {effective_columns} x {effective_rows} tiles"
+                        ));
+                        ui.label(
+                            egui::RichText::new("Even counts place the extra tile right or down.")
+                                .small()
+                                .weak(),
+                        );
+
+                        if ui
+                            .add_enabled(
+                                app.tile_mode != TileMode::None,
+                                egui::Button::new("Fit Tile Preview"),
+                            )
+                            .clicked()
+                        {
+                            app.fit_tile_preview_requested = true;
                             ui.close_menu();
                         }
                     });
@@ -187,17 +268,11 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         ui.close_menu();
                     }
                     if ui.button("Zoom In").clicked() {
-                        app.zoom *= 2.0;
-                        if app.zoom > 64.0 {
-                            app.zoom = 64.0;
-                        }
+                        app.zoom = (app.zoom * 2.0).clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
                         ui.close_menu();
                     }
                     if ui.button("Zoom Out").clicked() {
-                        app.zoom *= 0.5;
-                        if app.zoom < 0.5 {
-                            app.zoom = 0.5;
-                        }
+                        app.zoom = (app.zoom * 0.5).clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
                         ui.close_menu();
                     }
                     if ui.button("Fit to Window").clicked() {
@@ -206,8 +281,41 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     }
                 });
 
+                ui.menu_button("Effects", |ui| {
+                    if ui.button("Adjust Color...").clicked() {
+                        app.start_effect(crate::effects::EffectType::AdjustColor);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Offset...").clicked() {
+                        app.start_effect(crate::effects::EffectType::Offset);
+                        ui.close_menu();
+                    }
+                    if ui.button("Mirror...").clicked() {
+                        app.start_effect(crate::effects::EffectType::Mirror);
+                        ui.close_menu();
+                    }
+                    if ui.button("Rotate...").clicked() {
+                        app.start_effect(crate::effects::EffectType::Rotate);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Invert Colors...").clicked() {
+                        app.start_effect(crate::effects::EffectType::InvertColors);
+                        ui.close_menu();
+                    }
+                    if ui.button("Desaturation...").clicked() {
+                        app.start_effect(crate::effects::EffectType::Desaturation);
+                        ui.close_menu();
+                    }
+                    if ui.button("Posterize...").clicked() {
+                        app.start_effect(crate::effects::EffectType::Posterize);
+                        ui.close_menu();
+                    }
+                });
+
                 ui.menu_button("Settings", |ui| {
-                    ui.label(egui::RichText::new("New Canvas Presets").strong());
+                    ui.label(egui::RichText::new("New Canvas").strong());
                     ui.horizontal(|ui| {
                         for (label, dim) in [
                             ("16×16", 16),
@@ -216,15 +324,17 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                             ("128×128", 128),
                         ] {
                             if ui.button(label).clicked() {
-                                app.editor = crate::editor::EditorState::new(dim, dim);
-                                app.pan_offset = egui::Vec2::ZERO;
-                                app.auto_fit_requested = true;
-                                app.texture_dirty = true;
+                                app.request_new_document(dim, dim, crate::app::PalettePolicy::UseDefault);
                                 ui.close_menu();
                             }
                         }
                     });
 
+                    if ui.button("Custom Size…").clicked() {
+                        app.new_document_error = None;
+                        app.show_new_dialog = true;
+                        ui.close_menu();
+                    }
                     ui.separator();
                     ui.label(egui::RichText::new("Resize Existing Canvas").strong());
                     ui.horizontal(|ui| {
@@ -241,6 +351,17 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         }
                     });
 
+                    if ui.button("Custom Size…").clicked() {
+                        let (width, height) = {
+                            let document = app.editor.document();
+                            (document.width, document.height)
+                        };
+                        app.resize_width = width.to_string();
+                        app.resize_height = height.to_string();
+                        app.resize_error = None;
+                        app.show_custom_resize_dialog = true;
+                        ui.close_menu();
+                    }
                     ui.separator();
                     ui.label(egui::RichText::new("Canvas & Viewport").strong());
                     ui.checkbox(&mut app.show_grid, "Show Pixel Grid");
@@ -281,6 +402,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     }
                 });
 
+                #[cfg(not(target_arch = "wasm32"))]
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let text_color = ui.visuals().text_color();
                     if ui
@@ -294,17 +416,28 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    if ui
-                        .add(egui::Button::image(
+                    let window_presentation = PixelBuddyApp::window_presentation(ctx);
+                    let maximize_or_restore = match window_presentation {
+                        WindowPresentation::Windowed => {
+                            egui::Image::new(egui::include_image!("../../assets/icons/win-max.svg"))
+                        }
+                        WindowPresentation::Maximized | WindowPresentation::Fullscreen => {
                             egui::Image::new(egui::include_image!(
-                                "../../assets/icons/win-max.svg"
+                                "../../assets/icons/win-restore.svg"
                             ))
-                            .tint(text_color),
-                        ))
-                        .clicked()
-                    {
-                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                        }
+                    }
+                    .tint(text_color);
+                    let maximize_or_restore_response = ui
+                        .add(egui::Button::image(maximize_or_restore))
+                        .on_hover_text(match window_presentation {
+                            WindowPresentation::Windowed => "Maximize",
+                            WindowPresentation::Maximized | WindowPresentation::Fullscreen => {
+                                "Restore"
+                            }
+                        });
+                    if maximize_or_restore_response.clicked() {
+                        PixelBuddyApp::toggle_maximize_or_restore(ctx, app);
                     }
                     if ui
                         .add(egui::Button::image(
@@ -325,8 +458,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                         ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                     }
                     if response.double_clicked() {
-                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                        PixelBuddyApp::toggle_maximize_or_restore(ctx, app);
                     }
                 });
             });

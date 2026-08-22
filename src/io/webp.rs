@@ -8,7 +8,7 @@ use crate::{
     document::Document,
     io::{
         resize_rgba_nearest_neighbor, rgba_byte_len, scaled_canvas_dimensions,
-        validate_canvas_dimensions, ExportFormat, IoError,
+        validate_canvas_dimensions, validate_raster_input_size, ExportFormat, IoError,
     },
 };
 
@@ -67,6 +67,7 @@ pub fn export_document_to_webp_at_dimensions(
 
 /// Imports a WebP as a single-layer document.
 pub fn import_webp_to_document(data: &[u8]) -> Result<Document, IoError> {
+    validate_raster_input_size(data, "WebP image")?;
     let (width, height) = ImageReader::with_format(Cursor::new(data), ImageFormat::WebP)
         .into_dimensions()
         .map_err(|error| IoError::Decode {
@@ -75,11 +76,12 @@ pub fn import_webp_to_document(data: &[u8]) -> Result<Document, IoError> {
         })?;
     validate_canvas_dimensions(width, height)?;
 
-    let image = image::load_from_memory_with_format(data, ImageFormat::WebP)
-        .map_err(|error| IoError::Decode {
+    let image = image::load_from_memory_with_format(data, ImageFormat::WebP).map_err(|error| {
+        IoError::Decode {
             format: "WebP image",
             message: error.to_string(),
-        })?;
+        }
+    })?;
 
     let rgba8 = image.to_rgba8();
     let pixels = rgba8.into_raw();

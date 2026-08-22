@@ -8,7 +8,7 @@ use crate::{
     document::Document,
     io::{
         resize_rgba_nearest_neighbor, rgba_byte_len, scaled_canvas_dimensions,
-        validate_canvas_dimensions, ExportFormat, IoError,
+        validate_canvas_dimensions, validate_raster_input_size, ExportFormat, IoError,
     },
 };
 
@@ -77,6 +77,7 @@ pub fn export_document_to_png_at_dimensions(
 /// Dimensions are read and validated before decoding pixel data, preventing a
 /// malformed header from triggering a large image allocation.
 pub fn import_png_to_document(data: &[u8]) -> Result<Document, IoError> {
+    validate_raster_input_size(data, "PNG image")?;
     let (width, height) = ImageReader::with_format(Cursor::new(data), ImageFormat::Png)
         .into_dimensions()
         .map_err(|error| IoError::Decode {

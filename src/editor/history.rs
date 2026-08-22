@@ -1,9 +1,14 @@
 use crate::document::Document;
 
+/// Default retained-memory ceiling for undo, redo, and suspended branch data.
+pub const DEFAULT_HISTORY_BYTE_BUDGET: usize = 64 * 1024 * 1024;
+
 pub trait Command {
     fn execute(&mut self, doc: &mut Document);
     fn undo(&mut self, doc: &mut Document);
     fn description(&self) -> &str;
+    /// Conservative estimate of heap and inline bytes retained by this command.
+    fn retained_bytes(&self) -> usize;
 }
 
 pub struct History {
@@ -17,6 +22,7 @@ pub struct History {
     /// redo path and the replacement path is discarded.
     suspended_future: Option<SuspendedFuture>,
     max_size: usize,
+    max_bytes: usize,
 }
 
 struct SuspendedFuture {
@@ -29,11 +35,16 @@ struct SuspendedFuture {
 
 impl History {
     pub fn new(max_size: usize) -> Self {
+        Self::with_limits(max_size, DEFAULT_HISTORY_BYTE_BUDGET)
+    }
+
+    pub fn with_limits(max_size: usize, max_bytes: usize) -> Self {
         Self {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             suspended_future: None,
             max_size,
+            max_bytes,
         }
     }
 
@@ -51,7 +62,7 @@ impl History {
     pub fn push_applied(&mut self, command: Box<dyn Command>) {
         self.prepare_for_new_command();
         self.undo_stack.push(command);
-        self.trim_to_max_size();
+        self.trim_to_limits();
     }
 
     pub fn undo(&mut self, doc: &mut Document) {
@@ -103,6 +114,30 @@ impl History {
             .collect()
     }
 
+    pub fn entry_count(&self) -> usize {
+        self.undo_stack.len()
+            + self.redo_stack.len()
+            + self
+                .suspended_future
+                .as_ref()
+                .map_or(0, |future| future.redo_stack.len())
+    }
+
+    pub fn retained_bytes(&self) -> usize {
+        let stack_bytes = |stack: &[Box<dyn Command>]| {
+            stack.iter().fold(0usize, |total, command| {
+                total.saturating_add(command.retained_bytes())
+            })
+        };
+        stack_bytes(&self.undo_stack)
+            .saturating_add(stack_bytes(&self.redo_stack))
+            .saturating_add(
+                self.suspended_future
+                    .as_ref()
+                    .map_or(0, |future| stack_bytes(&future.redo_stack)),
+            )
+    }
+
     pub fn jump_to_undo_index(&mut self, target_idx: usize, doc: &mut Document) {
         if target_idx < self.undo_stack.len() {
             let undo_count = self.undo_stack.len() - (target_idx + 1);
@@ -146,26 +181,45 @@ impl History {
         }
     }
 
-    /// Enforces the configured history limit while keeping a suspended future
-    /// valid. If eviction removes a command from the replacement path, its
-    /// branch point can no longer be reached, so restoring the old future
-    /// would corrupt document state and is discarded.
-    fn trim_to_max_size(&mut self) {
-        while self.undo_stack.len() > self.max_size {
-            self.undo_stack.remove(0);
-
-            let discard_suspended_future = self.suspended_future.as_mut().is_some_and(|future| {
-                if future.branch_point_undo_len == 0 {
-                    true
-                } else {
-                    future.branch_point_undo_len -= 1;
-                    false
+    /// Enforces count and retained-byte limits across every live history path.
+    /// Oldest applied transactions are discarded first. If only a redo or
+    /// suspended future remains, its farthest future transaction is discarded.
+    fn trim_to_limits(&mut self) {
+        while self.entry_count() > self.max_size || self.retained_bytes() > self.max_bytes {
+            if !self.undo_stack.is_empty() {
+                self.undo_stack.remove(0);
+                let discard_suspended_future =
+                    self.suspended_future.as_mut().is_some_and(|future| {
+                        if future.branch_point_undo_len == 0 {
+                            true
+                        } else {
+                            future.branch_point_undo_len -= 1;
+                            false
+                        }
+                    });
+                if discard_suspended_future {
+                    self.suspended_future = None;
                 }
-            });
-
-            if discard_suspended_future {
-                self.suspended_future = None;
+                continue;
             }
+
+            if let Some(future) = self.suspended_future.as_mut() {
+                if !future.redo_stack.is_empty() {
+                    future.redo_stack.remove(0);
+                    if future.redo_stack.is_empty() {
+                        self.suspended_future = None;
+                    }
+                    continue;
+                }
+                self.suspended_future = None;
+                continue;
+            }
+
+            if !self.redo_stack.is_empty() {
+                self.redo_stack.remove(0);
+                continue;
+            }
+            break;
         }
     }
 }
@@ -211,6 +265,13 @@ impl Command for DocumentSnapshotCommand {
     fn description(&self) -> &str {
         &self.description
     }
+
+    fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.description.capacity())
+            .saturating_add(document_retained_bytes(&self.before))
+            .saturating_add(document_retained_bytes(&self.after))
+    }
 }
 
 impl DrawCommand {
@@ -244,11 +305,42 @@ impl Command for DrawCommand {
     fn description(&self) -> &str {
         "Draw pixels"
     }
+
+    fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>().saturating_add(
+            self.changes
+                .capacity()
+                .saturating_mul(std::mem::size_of::<(u32, u32, [u8; 4], [u8; 4])>()),
+        )
+    }
+}
+
+fn document_retained_bytes(document: &Document) -> usize {
+    let layer_bytes = document.layers.iter().fold(0usize, |total, layer| {
+        total
+            .saturating_add(layer.name.capacity())
+            .saturating_add(layer.canvas.retained_pixel_bytes())
+    });
+    std::mem::size_of::<Document>()
+        .saturating_add(
+            document
+                .layers
+                .capacity()
+                .saturating_mul(std::mem::size_of::<crate::document::Layer>()),
+        )
+        .saturating_add(layer_bytes)
+        .saturating_add(
+            document
+                .palette
+                .colors
+                .capacity()
+                .saturating_mul(std::mem::size_of::<[u8; 4]>()),
+        )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, DocumentSnapshotCommand, History};
+    use super::{Command, DocumentSnapshotCommand, DrawCommand, History};
     use crate::document::Document;
 
     struct PixelCommand {
@@ -282,6 +374,10 @@ mod tests {
 
         fn description(&self) -> &str {
             self.description
+        }
+
+        fn retained_bytes(&self) -> usize {
+            std::mem::size_of::<Self>()
         }
     }
 
@@ -457,6 +553,66 @@ mod tests {
         );
     }
 
+    #[test]
+    fn byte_budget_evicts_oldest_transactions_even_below_the_count_limit() {
+        let mut document = Document::new(1, 1);
+        let command_bytes = std::mem::size_of::<PixelCommand>();
+        let mut history = History::with_limits(100, command_bytes * 2);
+        let transparent = [0, 0, 0, 0];
+
+        push_pixel_command(&mut history, &mut document, "Step 1", transparent, color(1));
+        push_pixel_command(&mut history, &mut document, "Step 2", color(1), color(2));
+        push_pixel_command(&mut history, &mut document, "Step 3", color(2), color(3));
+
+        assert_eq!(history.undo_descriptions(), vec!["Step 2", "Step 3"]);
+        assert_eq!(history.entry_count(), 2);
+        assert!(history.retained_bytes() <= command_bytes * 2);
+        history.undo(&mut document);
+        history.undo(&mut document);
+        assert_eq!(document.active_layer().canvas.get_pixel(0, 0), color(1));
+    }
+
+    #[test]
+    fn repeated_large_fills_remain_within_the_history_byte_budget() {
+        let mut document = Document::new(16, 16);
+        let first_changes: Vec<_> = (0..16)
+            .flat_map(|y| (0..16).map(move |x| (x, y, [0, 0, 0, 0], [255, 0, 0, 255])))
+            .collect();
+        let second_changes: Vec<_> = (0..16)
+            .flat_map(|y| (0..16).map(move |x| (x, y, [255, 0, 0, 255], [0, 0, 255, 255])))
+            .collect();
+        let command_bytes = DrawCommand::new(0, first_changes.clone()).retained_bytes();
+        let mut history = History::with_limits(100, command_bytes);
+
+        history.push(Box::new(DrawCommand::new(0, first_changes)), &mut document);
+        history.push(Box::new(DrawCommand::new(0, second_changes)), &mut document);
+
+        assert_eq!(history.entry_count(), 1);
+        assert!(history.retained_bytes() <= command_bytes);
+        history.undo(&mut document);
+        assert_eq!(
+            document.active_layer().canvas.get_pixel(8, 8),
+            [255, 0, 0, 255]
+        );
+    }
+    #[test]
+    fn an_oversized_snapshot_is_applied_but_not_retained_for_undo() {
+        let before = Document::new(64, 64);
+        let mut after = before.clone();
+        after
+            .active_layer_mut()
+            .canvas
+            .set_pixel(0, 0, [9, 8, 7, 255]);
+        let command = DocumentSnapshotCommand::new("Large structural edit", before, after);
+        let command_bytes = command.retained_bytes();
+        let mut history = History::with_limits(100, command_bytes.saturating_sub(1));
+
+        history.push_applied(Box::new(command));
+
+        assert!(!history.can_undo());
+        assert_eq!(history.entry_count(), 0);
+        assert_eq!(history.retained_bytes(), 0);
+    }
     #[test]
     fn clearing_history_discards_a_suspended_future() {
         let mut document = Document::new(1, 1);

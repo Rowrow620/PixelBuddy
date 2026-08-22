@@ -2,11 +2,20 @@ pub mod animation;
 pub mod canvas;
 pub mod layer;
 pub mod palette;
+pub mod palette_library;
 
 pub use animation::{AnimationFrame, AnimationManager};
 pub use canvas::Canvas;
-pub use layer::{BlendMode, Layer};
+pub use layer::{BlendMode, Layer, LayerError};
 pub use palette::Palette;
+
+pub const MAX_LAYERS_PER_FRAME: usize = 256;
+pub const MAX_PALETTE_COLORS: usize = 256;
+pub const MAX_LAYER_NAME_BYTES: usize = 256;
+
+pub fn valid_layer_name(name: &str) -> bool {
+    name.len() <= MAX_LAYER_NAME_BYTES && !name.chars().any(char::is_control)
+}
 
 #[derive(Clone, Debug)]
 pub struct Document {
@@ -18,23 +27,36 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn new(width: u32, height: u32) -> Self {
-        let layers = vec![Layer::new("Layer 1", width, height)];
-        Self {
+    pub fn try_new(width: u32, height: u32) -> Result<Self, LayerError> {
+        let layers = vec![Layer::try_new("Layer 1", width, height)?];
+        Ok(Self {
             layers,
             active_layer_index: 0,
             palette: Palette::default(),
             width,
             height,
-        }
+        })
     }
 
-    pub fn resize(&mut self, new_width: u32, new_height: u32) {
-        self.width = new_width;
-        self.height = new_height;
-        for layer in &mut self.layers {
-            layer.canvas.resize(new_width, new_height);
-        }
+    pub(crate) fn new(width: u32, height: u32) -> Self {
+        Self::try_new(width, height).expect("internal document construction must be valid")
+    }
+
+    /// Builds a resized document atomically. No layer is replaced unless every
+    /// destination canvas validates and allocates successfully.
+    pub fn try_resized(&self, new_width: u32, new_height: u32) -> Result<Self, LayerError> {
+        let layers = self
+            .layers
+            .iter()
+            .map(|layer| layer.try_resized(new_width, new_height))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            layers,
+            active_layer_index: self.active_layer_index,
+            palette: self.palette.clone(),
+            width: new_width,
+            height: new_height,
+        })
     }
 
     pub fn active_layer(&self) -> &Layer {
