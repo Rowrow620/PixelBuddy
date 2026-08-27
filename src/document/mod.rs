@@ -17,7 +17,7 @@ pub fn valid_layer_name(name: &str) -> bool {
     name.len() <= MAX_LAYER_NAME_BYTES && !name.chars().any(char::is_control)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Document {
     pub layers: Vec<Layer>,
     pub active_layer_index: usize,

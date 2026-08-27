@@ -11,7 +11,7 @@ pub enum BlendMode {
     Overlay,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Layer {
     pub name: String,
     pub canvas: Canvas,

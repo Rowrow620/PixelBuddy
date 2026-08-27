@@ -743,7 +743,8 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
         if ui
             .add(egui::Button::image(add_img).min_size(button_size))
             .on_hover_text("Add Layer")
-            .clicked() && app.add_layer_all_frames()
+            .clicked()
+            && app.add_layer_all_frames()
         {
             clear_layer_rename_draft(ctx);
         }
@@ -757,7 +758,9 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
                 egui::Button::image(del_img).min_size(button_size),
             )
             .on_hover_text("Delete Layer")
-            .clicked() && layers_count > 1 && app.remove_active_layer_all_frames()
+            .clicked()
+            && layers_count > 1
+            && app.remove_active_layer_all_frames()
         {
             clear_layer_rename_draft(ctx);
         }
@@ -768,7 +771,8 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
         if ui
             .add(egui::Button::image(dup_img).min_size(button_size))
             .on_hover_text("Duplicate Layer")
-            .clicked() && app.duplicate_active_layer_all_frames()
+            .clicked()
+            && app.duplicate_active_layer_all_frames()
         {
             clear_layer_rename_draft(ctx);
         }
@@ -1132,68 +1136,6 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
         });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        compact_picker_marker_radius, palette_grid_column_count, palette_vertical_move_target,
-        PaletteVerticalDirection, COMPACT_COLOR_PICKER_MARKER_RADIUS,
-    };
-
-    #[test]
-    fn palette_grid_column_count_accounts_for_inter_swatch_spacing() {
-        // Six 22px swatches and five 8px gaps need 172px in total.
-        assert_eq!(palette_grid_column_count(172.0, 8.0), 6);
-        assert_eq!(palette_grid_column_count(171.9, 8.0), 5);
-        assert_eq!(palette_grid_column_count(0.0, 8.0), 1);
-    }
-
-    #[test]
-    fn vertical_palette_moves_stay_in_the_same_visual_column() {
-        let palette_len = 14;
-        let columns = 6;
-
-        assert_eq!(
-            palette_vertical_move_target(7, palette_len, columns, PaletteVerticalDirection::Up),
-            Some(1)
-        );
-        assert_eq!(
-            palette_vertical_move_target(1, palette_len, columns, PaletteVerticalDirection::Down),
-            Some(7)
-        );
-    }
-
-    #[test]
-    fn vertical_palette_moves_are_unavailable_without_a_matching_row_slot() {
-        let palette_len = 14;
-        let columns = 6;
-
-        assert_eq!(
-            palette_vertical_move_target(1, palette_len, columns, PaletteVerticalDirection::Up),
-            None
-        );
-        assert_eq!(
-            palette_vertical_move_target(8, palette_len, columns, PaletteVerticalDirection::Down),
-            None
-        );
-        assert_eq!(
-            palette_vertical_move_target(0, palette_len, 0, PaletteVerticalDirection::Down),
-            None
-        );
-    }
-
-    #[test]
-    fn compact_picker_marker_stays_small_and_fits_tight_color_fields() {
-        let normal_field = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
-        assert_eq!(
-            compact_picker_marker_radius(normal_field),
-            COMPACT_COLOR_PICKER_MARKER_RADIUS
-        );
-
-        let constrained_field = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(6.0, 8.0));
-        assert_eq!(compact_picker_marker_radius(constrained_field), 3.0);
-    }
-}
-
 pub struct LayerRowUi<'a> {
     pub layer_index: usize,
     pub active_layer_index: usize,
@@ -1307,4 +1249,66 @@ pub(crate) fn draw_layer_row_ui(
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        compact_picker_marker_radius, palette_grid_column_count, palette_vertical_move_target,
+        PaletteVerticalDirection, COMPACT_COLOR_PICKER_MARKER_RADIUS,
+    };
+
+    #[test]
+    fn palette_grid_column_count_accounts_for_inter_swatch_spacing() {
+        // Six 22px swatches and five 8px gaps need 172px in total.
+        assert_eq!(palette_grid_column_count(172.0, 8.0), 6);
+        assert_eq!(palette_grid_column_count(171.9, 8.0), 5);
+        assert_eq!(palette_grid_column_count(0.0, 8.0), 1);
+    }
+
+    #[test]
+    fn vertical_palette_moves_stay_in_the_same_visual_column() {
+        let palette_len = 14;
+        let columns = 6;
+
+        assert_eq!(
+            palette_vertical_move_target(7, palette_len, columns, PaletteVerticalDirection::Up),
+            Some(1)
+        );
+        assert_eq!(
+            palette_vertical_move_target(1, palette_len, columns, PaletteVerticalDirection::Down),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn vertical_palette_moves_are_unavailable_without_a_matching_row_slot() {
+        let palette_len = 14;
+        let columns = 6;
+
+        assert_eq!(
+            palette_vertical_move_target(1, palette_len, columns, PaletteVerticalDirection::Up),
+            None
+        );
+        assert_eq!(
+            palette_vertical_move_target(8, palette_len, columns, PaletteVerticalDirection::Down),
+            None
+        );
+        assert_eq!(
+            palette_vertical_move_target(0, palette_len, 0, PaletteVerticalDirection::Down),
+            None
+        );
+    }
+
+    #[test]
+    fn compact_picker_marker_stays_small_and_fits_tight_color_fields() {
+        let normal_field = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
+        assert_eq!(
+            compact_picker_marker_radius(normal_field),
+            COMPACT_COLOR_PICKER_MARKER_RADIUS
+        );
+
+        let constrained_field = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(6.0, 8.0));
+        assert_eq!(compact_picker_marker_radius(constrained_field), 3.0);
+    }
 }
