@@ -14,6 +14,11 @@ const MINIMUM_WINDOW_SIZE: [f32; 2] = [720.0, 540.0];
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
+    if std::env::args_os().any(|argument| argument == "--version" || argument == "-V") {
+        println!("pixelbuddy {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     env_logger::init();
 
     let icon_result = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"));
