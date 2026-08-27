@@ -678,6 +678,10 @@ impl PixelBuddyApp {
     }
 
     fn commit_document_replacement(&mut self, replacement: DocumentReplacement) {
+        // Effect previews belong to one exact project/frame revision. A
+        // replacement must never leave a preview capable of applying to the
+        // incoming project.
+        self.active_effect = None;
         let (status_message, should_be_dirty, show_timeline) = match replacement {
             DocumentReplacement::NewDocument {
                 width,
@@ -792,7 +796,45 @@ impl PixelBuddyApp {
     }
 
     pub fn start_effect(&mut self, effect_type: crate::effects::EffectType) {
-        let mut effect = crate::effects::ActiveEffectState::new(effect_type, &self.editor);
+        if self.active_effect.is_some() {
+            return;
+        }
+
+        // Playback's visible frame can differ from its persisted selection.
+        // An effect is an edit, so first pause and adopt exactly what the user
+        // can see, then capture provenance from that stable frame.
+        if self.editor.animation.is_playing {
+            self.prepare_active_frame_transition();
+            let selection_changed = self.editor.pause_animation_for_editing();
+            if selection_changed {
+                self.finish_active_frame_transition(false);
+            }
+        }
+
+        let Some(active_layer) = self
+            .editor
+            .document()
+            .layers
+            .get(self.editor.document().active_layer_index)
+        else {
+            self.status_message =
+                Some(("The active effect layer no longer exists.".to_owned(), true));
+            return;
+        };
+        if active_layer.locked {
+            self.status_message = Some((
+                "Unlock the active layer before applying an effect.".to_owned(),
+                true,
+            ));
+            return;
+        }
+
+        let mut effect = crate::effects::ActiveEffectState::new(
+            effect_type,
+            &self.editor,
+            self.document_session_id,
+            self.active_frame_generation,
+        );
         let selection = self.editor.selection;
         effect.refresh_preview(&selection);
         self.active_effect = Some(effect);
@@ -2325,6 +2367,7 @@ impl PixelBuddyApp {
             || self.recovery_snapshot.is_some()
             || self.show_close_confirmation
             || self.show_spritesheet_import_dialog
+            || self.active_effect.is_some()
     }
 
     fn shortcut_permissions(&self, ctx: &egui::Context) -> ShortcutPermissions {
@@ -2536,7 +2579,9 @@ impl eframe::App for PixelBuddyApp {
 
         // Handle animation playback stepping
         let current_time = ctx.input(|i| i.time);
-        self.update_animation_playback(current_time);
+        if self.active_effect.is_none() {
+            self.update_animation_playback(current_time);
+        }
         if self.editor.animation.is_playing {
             ctx.request_repaint();
         }

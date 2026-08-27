@@ -69,7 +69,7 @@ impl std::fmt::Display for CanvasError {
 
 impl std::error::Error for CanvasError {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Canvas {
     width: u32,
     height: u32,

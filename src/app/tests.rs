@@ -2066,6 +2066,21 @@ fn starting_an_effect_immediately_previews_parameterless_effects() {
 }
 
 #[test]
+fn project_replacement_clears_a_frame_bound_effect_transaction() {
+    let mut app = PixelBuddyApp::new(2, 2);
+    app.start_effect(crate::effects::EffectType::InvertColors);
+    assert!(app.active_effect.is_some());
+
+    app.request_new_document(4, 3, super::PalettePolicy::UseDefault);
+
+    assert!(app.active_effect.is_none());
+    assert_eq!(
+        (app.editor.document().width, app.editor.document().height),
+        (4, 3)
+    );
+}
+
+#[test]
 fn non_preset_canvas_dimensions_are_valid_for_new_and_resize_workflows() {
     assert!(PixelBuddyApp::can_create_canvas(580, 320).is_ok());
     assert!(PixelBuddyApp::can_create_canvas(333, 197).is_ok());

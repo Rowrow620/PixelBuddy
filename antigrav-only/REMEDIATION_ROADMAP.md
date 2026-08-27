@@ -1,8 +1,8 @@
 # PixelBuddy Remediation Roadmap
 
 Created: 2026-08-20  
-Last verified: 2026-08-21  
-Status: Active — Milestones 0 through 4 complete for the audited scope; Milestone 5 implementation complete with first pushed hosted-runner confirmation pending; Milestone 6 in progress. A small warning-cleanup follow-up is open for newly unused window constants and app command wrappers.  
+Last verified: 2026-08-25
+Status: Active — Milestones 0 through 4 are complete for their audited scope. Milestone 5 is implemented locally but still awaits its first pushed hosted-runner confirmation. Milestone 6 contains prototypes for all thirteen planned effects and most palette infrastructure. PB-018 and PB-019 are complete; PB-017 awaits final transaction/UI regressions, and PB-020 modularization remains open.
 Scope: Correctness, data safety, security hardening, performance, maintainability, and release hygiene
 
 This document is the canonical local engineering audit and remediation plan. It records the current findings and orders the technical work required to make further feature development safer. Older architecture, audit, and product-planning snapshots were removed because significant codebase changes made their inventories and baseline claims unreliable.
@@ -13,13 +13,14 @@ PixelBuddy should have one reliable mutation path for editor state, consistent d
 
 ## Current verified baseline
 
-As of 2026-08-21:
+As of 2026-08-25:
 
-- `cargo fmt --all -- --check` passes.
-- `cargo test --all-targets --all-features` passes: 193 tests.
+- `cargo test --all-targets --all-features` passes: 221 tests.
 - `cargo check --target wasm32-unknown-unknown --tests --all-features` passes.
-- `cargo clippy --all-targets --all-features -- -D warnings` passes without broad warning suppressions.
-- The working tree intentionally remains uncommitted while remediation is in progress.
+- `cargo fmt --all -- --check` passes.
+- `cargo clippy --all-targets --all-features -- -D warnings` passes without lint suppressions.
+- Local `main` is 27 commits ahead of `origin/main`; the hosted CI and release smoke gates have therefore not exercised this remediation series.
+- Milestone 6 implementation and this roadmap update remain intentionally uncommitted.
 
 ## Priority and effort legend
 
@@ -55,12 +56,16 @@ Effort estimates are relative and should be revised after the first implementati
 | PB-014 | P2 | Complete | Shortcuts, dialogs, texture caches, app tests, and canvas tile layout are separated; fallible model construction/resize enforces core invariants | `src/app.rs`, editor/UI boundary | L | 4 |
 | PB-015 | P3 | Complete | Dormant frame drag/drop code and unused direct TOML/clipboard dependencies are removed; direct dependencies and assets are reference-audited | frame drag/drop, `Cargo.toml` | S | 4 |
 | PB-016 | P2 | Complete | Raster/project file bytes, decoded dimensions, and recovery snapshots have enforced early-rejection budgets | I/O and recovery paths | M | 3 |
+| PB-017 | P0 | In progress | Effects now pause on the visible frame, run as a foreground modal, capture provenance, and reject stale Apply; remaining target-lock validation and full transaction regressions overlap PB-018 | effect lifecycle/modal/app coordination | M | 6 |
+| PB-018 | P1 | Complete | Effects share one clipped Active Layer/Current Selection target; locked/missing layers, no-op commits, palette selection, selection-local geometry, shadow compositing, and pixel averaging enforce explicit contracts | effect transforms and commit boundary | L | 6 |
+| PB-019 | P1 | Complete | Gradient inputs and stop counts are bounded, finite, endpoint-preserving, and sorted once per preview; sampling is allocation-free and visible pixels reach both ramp endpoints | `src/effects/gradient.rs`, effect UI | M | 6 |
+| PB-020 | P2 | Open | New Effects growth recreated a monolithic UI/state/transform module and exposed additional model/API debt | `src/effects/mod.rs`, large coordinator/model files | L | 6 |
 
 ## Milestone 0 — Restore the engineering baseline
 
 Goal: make the repository’s automated feedback trustworthy before behavioral changes continue.
 
-Status: **Complete.** Formatting, strict Clippy, tests, and native/WASM compilation are green.
+Status: **Complete.** The newer Effects/Layers formatting and strict-Clippy regressions were repaired as the first Milestone 6 increment; all native and WASM gates are green again.
 
 ### Work
 
@@ -74,6 +79,8 @@ Status: **Complete.** Formatting, strict Clippy, tests, and native/WASM compilat
 - [x] Fix the remaining module/test item-ordering diagnostic in `layers_panel.rs`.
 - [x] Complete regression coverage for PB-001 through PB-005.
 - [x] Record the supported Rust version as Rust 1.88 through `package.rust-version` in `Cargo.toml`; Milestone 5 will exercise it in CI.
+- [x] Format the newer Effects/Layers changes and restore `cargo fmt --all -- --check`.
+- [x] Fix the current `clone_on_copy` and `items_after_test_module` failures and restore strict Clippy.
 
 ### Exit gate
 
@@ -84,7 +91,7 @@ cargo test --all-targets --all-features
 cargo check --target wasm32-unknown-unknown --tests --all-features
 ```
 
-Current result: all four commands pass; strict Clippy is warning-free and the regression suite contains 193 tests.
+Current result (2026-08-27): formatting, strict Clippy, 221/221 native tests, and the WASM test/application check all pass.
 
 ## Milestone 1 — Stop data loss and cross-document corruption
 
@@ -327,7 +334,7 @@ Project files are capped at 256 MiB and project canvases at 256 MiB of decoded p
 
 Goal: shrink the surface where future changes can bypass established invariants.
 
-Status: **Complete.** PB-014 and PB-015 are closed for the audited scope, and the warning-free Milestone 0 baseline is now complete too.
+Status: **Complete for the audited scope.** PB-014 and PB-015 remain closed. Subsequent Effects development increased several large files again; that new structural debt is tracked separately as PB-020 rather than retroactively reopening the original extraction work.
 
 ### 4.1 Decompose the app coordinator — PB-014
 
@@ -339,7 +346,7 @@ Status: **Complete.** PB-014 and PB-015 are closed for the audited scope, and th
 - [x] Split canvas tile layout/hit-testing and the canvas regression suite into `ui/canvas_view/` submodules.
 - [x] Keep document/editor models independent of egui and preserve behavior through the full regression suite.
 
-Largest-file evidence: `src/app.rs` fell from roughly 5,030 to 2,502 lines, and `src/ui/canvas_view.rs` fell from roughly 2,077 to 1,421 lines. The extracted runtime modules have cohesive ownership rather than acting as arbitrary line-count shards. Document-command and playback extraction remain reasonable future refinements if those areas grow, but the coordinator no longer directly implements every UI, input, and cache concern.
+Historical largest-file evidence: `src/app.rs` fell from roughly 5,030 to 2,502 lines, and `src/ui/canvas_view.rs` fell from roughly 2,077 to 1,421 lines. Current growth has brought `app.rs` to roughly 2,864 lines, `canvas_view.rs` to 1,523 lines, and the new `effects/mod.rs` to roughly 1,850 lines. The earlier extractions remain cohesive, but Effects now needs its own state/transform/UI split under PB-020.
 
 ### 4.2 Strengthen model invariants
 
@@ -368,13 +375,13 @@ Largest-file evidence: `src/app.rs` fell from roughly 5,030 to 2,502 lines, and 
 
 Goal: make dependency, supply-chain, licensing, and platform checks repeatable.
 
-Status: **Implementation complete; first pushed clean-runner confirmation pending.** All repository-side gates pass locally on the documented Rust 1.88 MSRV.
+Status: **Implementation complete; first pushed clean-runner confirmation pending.** The workflow defines the documented Rust 1.88 native/WASM gates, but the current local format/Clippy regression must be fixed before the first push can produce a clean result.
 
 - [x] Add `cargo audit` or `cargo deny` to a scheduled and pull-request workflow.
 - [x] Review the transitive `ttf-parser 0.25.1` unmaintained advisory; monitor upstream because the audit found no patched release at the time of writing.
 - [x] Pin GitHub Actions to immutable commit SHAs and use dependency update automation to refresh them.
 - [x] Generate and review license/dependency notices, including bundled fonts and visual assets.
-- [ ] Test the documented minimum supported Rust version, native release build, and WASM build in CI.
+- [x] Configure CI to test the documented minimum supported Rust version, native release build/smoke test, and WASM test/application build.
 - [x] Add fixtures for corrupt projects, oversized metadata, truncated recovery data, and hostile sprite sheets.
 - [x] Document security/resource limits and the recovery-file lifecycle.
 
@@ -383,13 +390,13 @@ Status: **Implementation complete; first pushed clean-runner confirmation pendin
 - [x] CI defines format, lint, tests, native build/smoke, WASM build/smoke, dependency audit, and license checks.
 - [x] Actions are SHA-pinned and covered by Dependabot.
 - [x] Known advisories have a documented disposition.
-- [ ] Release artifacts pass the first pushed clean hosted-runner smoke test; local Rust 1.88 native/Web smoke checks pass, but the intentionally uncommitted work cannot trigger GitHub Actions yet.
+- [ ] Release artifacts pass the first pushed clean hosted-runner smoke test; local `main` is 27 commits ahead of `origin/main`, and current formatting/Clippy failures would block the quality job.
 
 ## Milestone 6 — Complete palette, color, and raster-effects workflows
 
 Goal: fill the major art-workflow gaps without weakening the mutation, undo, cache, input-isolation, or resource-limit boundaries established in Milestones 1–4.
 
-Status: **In progress.** The larger RGB/hex picker is complete. PixelBuddy now exposes an Effects menu, a shared non-destructive preview/commit foundation, and baseline Adjust Color, Offset, Mirror, arbitrary-angle Rotate, Invert Colors, Desaturation, and Posterize operations. Project creation still uses only the default palette; explicit effect scope/contracts, palette-dependent workflows, advanced effects, gradients, and the full hostile-parameter/undo/cache regression pass remain open.
+Status: **In progress; safety hardening required before more feature work.** The larger RGB/hex picker is complete. A built-in palette library and current/default/preset replacement policy are present. All thirteen planned effects are exposed with live-preview prototypes, including Palettize, Outline, Drop Shadow, Pixelize, Gradient Fill, and Gradient Map. These newer implementations do not yet satisfy the established modal/provenance, target, lock, no-op, palette, gradient-performance, or regression contracts; PB-017 through PB-020 are open.
 
 Recent UI resilience work also replaced the fixed 200 px right sidebar with a responsive 240 px default that users can resize from 220–320 px. The Blend Mode label and selector now stack vertically and the palette grid continues deriving its columns from available width, preventing DPI/window-width clipping from recurring as a one-off row fix.
 
@@ -402,7 +409,7 @@ Recent UI resilience work also replaced the fixed 200 px right sidebar with a re
 - **Gradients:** build one reusable `ColorRamp` model and rasterizer first. Validate ordered stops and geometry before preview generation, then layer the interactive stop editor, interpolation/color-space options, linear/radial geometry, repeat modes, and dithering UI on top. Gradient Fill and Gradient Map should share the ramp while remaining separate transforms.
 - **Preview performance:** rebuild previews only when parameters change, keep the project document immutable, and reuse bounded textures. For neighborhood effects such as outlines and shadows, cap radius/blur work and avoid allocating more than a small number of canvas-sized scratch buffers.
 - **Testing:** use table-driven pure-transform tests for pixel output and app-level tests for opening, changing, applying, canceling, undo/redo, dirty state, selection clipping, locked layers, and cache invalidation. Add native/WASM output hashes for deterministic transforms and boundary tests for the largest accepted parameters.
-- **Warning cleanup:** wire the useful app command wrappers into Layers/Palette/History UI, remove wrappers that have no production caller, and use the window-size constants in `ViewportBuilder` including its minimum-size constraint. Restore a warning-free `cargo check` before the final Milestone 6 hardening pass.
+- **Warning cleanup:** format the newer Effects/Layers changes, replace the copied `Selection::clone()` with its `Copy` value, move `layers_panel` production items before its test module, and restore the complete format/strict-Clippy gate before further feature work.
 
 #### Shared preview performance contract
 
@@ -419,22 +426,25 @@ Apply these rules to every current and future effect, filter, transform, or dial
 - [ ] For neighborhood effects, gradients, and other multi-pass operations, reuse scratch buffers and define explicit work limits before exposing radius, blur, stop-count, or iteration controls.
 
 
-Suggested rough order:
+Suggested rough order from the current state:
 
-1. [x] Clean the warning baseline and finish shared scope/edge contracts.
-2. Add the preset library and project-creation palette policy.
-3. Complete Palettize, Outline, Drop Shadow, and Pixelize using pure transforms.
-4. Build the shared gradient ramp/rasterizer, then Gradient Fill and Gradient Map dialogs.
-5. Run the full undo/cache/resource/native/WASM regression and performance pass.
+1. Restore formatting and strict Clippy.
+2. Fix PB-017 so an effect is a true document/frame-bound modal transaction that pauses playback and blocks surrounding mutations.
+3. Fix PB-018 effect target, locked-layer, no-op, selection-boundary, palette-index, and alpha contracts.
+4. Fix PB-019 gradient validation, targeting, endpoint correctness, and per-pixel allocation/sort behavior.
+5. Complete and test the palette-policy edge cases and visible secondary-color UI.
+6. Split the Effects monolith and finish the remaining transform-quality policies under PB-020.
+7. Run the full undo/cache/resource/native/WASM regression and performance pass, then push for hosted CI confirmation.
 
 ### 6.1 Add project-creation palette presets
 
-- [ ] Define a built-in palette library with stable identifiers, display names, ordered opaque colors, and one explicit default palette.
-- [ ] Add a palette choice to New Project and new-project raster/sprite-sheet imports: **Keep current palette**, **Use default palette**, or **Choose preset**.
-- [ ] Show a swatch preview and palette name before the destructive replacement is confirmed.
-- [ ] Carry the chosen palette policy inside the pending replacement payload so it cannot change behind the confirmation dialog.
-- [ ] Apply the palette only after replacement commit; cancellation must leave the active project byte-for-byte unchanged.
+- [x] Define a built-in palette library with stable identifiers, display names, ordered opaque colors, and one explicit default palette.
+- [x] Add a palette choice to New Project and new-project raster/sprite-sheet imports: **Keep current palette**, **Use default palette**, or **Choose preset**.
+- [x] Show a swatch preview and palette name before a pending destructive replacement is confirmed.
+- [x] Carry the chosen palette policy inside the pending replacement payload so it cannot change behind the confirmation dialog.
+- [x] Apply the palette only after replacement commit; cancellation leaves the active project byte-for-byte unchanged.
 - [ ] Reject empty, oversized, or otherwise invalid presets and fall back deterministically to the default palette if a stored preset identifier no longer exists.
+- [ ] Make **Keep current palette** actually preserve the discarded project's palette. The current commit sequence replaces the editor first, so the no-op Keep Current branch retains the new editor's default/import palette instead.
 - [ ] Keep palette selection scoped to project creation: it must not silently change unrelated primary/secondary colors, tools, view preferences, or an existing project.
 - [ ] Test all three policies across New, raster import, sprite-sheet import, dirty-project cancel/confirm, and missing-preset fallback paths.
 
@@ -456,12 +466,14 @@ Acceptance criteria:
 - [x] Invalid or incomplete hex input must not mutate the selected color, resize the popup, close it, or leak a click to the canvas; show a compact inline invalid state instead.
 - [x] Preserve popup keyboard/click isolation, Escape and click-outside dismissal, copy behavior, gray-color hue retention, and RGB/HSV/hex synchronization.
 - [x] Add pure parsing/formatting tests plus constrained-width, three-digit RGB, invalid-hex, viewport-edge, and canvas click-through regressions.
+- [ ] Expose the editor's secondary color in the main UI beside the primary color. Make the active swatch unambiguous and allow both colors to use the same RGB/HSV/hex picker, because new gradients initialize from the primary-to-secondary color pair.
 
 Acceptance criteria:
 
 - Changing any RGB, hex, hue, saturation, or value control immediately updates every other representation to the same opaque color.
 - The popup dimensions remain stable for every valid numeric and hex value.
 - Opening or using the picker over the canvas cannot draw, dismiss prematurely, or move the underlying document.
+- The primary and secondary colors are both visible and editable, and a newly opened gradient starts with the same two colors shown by those swatches.
 
 ### 6.3 Add the missing Effects menu and raster operations
 
@@ -479,16 +491,16 @@ Missing effect inventory from the reference:
 - [x] **Offset Image (baseline)** — signed X/Y translation with wrap behavior and live preview; explicit edge-mode labeling remains part of the scope/contract pass.
 - [x] **Mirror Image (baseline)** — horizontal and vertical reflection with live preview; explicit pivot/scope labeling remains open.
 - [x] **Rotate Image (baseline)** — readable 0°, 90°, 180°, and 270° presets plus an editable −180°…180° angle; fixed-canvas, center-based nearest-neighbor sampling keeps pixel output crisp and previews non-destructively.
-- [ ] **Outline** — configurable color, thickness, inside/outside policy, and transparent-pixel handling.
-- [ ] **Drop Shadow** — configurable color, opacity, offset, and bounded blur policy.
+- [x] **Outline (prototype)** — color, thickness, outside Manhattan-distance outline, and live preview are present; inside/outside and transparent-edge policies remain open under PB-018.
+- [x] **Drop Shadow (prototype)** — color, opacity, signed offset, and live preview are present; correct normalized-alpha compositing and a bounded blur policy remain open under PB-018.
 - [x] **Invert Colors** — define whether transparent RGB channels are preserved and keep alpha unchanged.
 - [x] **Desaturation** — deterministic luminance conversion with alpha unchanged.
 - [x] **Adjust Color** — previewable hue, saturation, and brightness/value controls using the dialog contract in 6.3.1.
-- [ ] **Palettize** — map artwork to the active or explicitly selected preset palette with a documented distance metric and optional dithering policy.
-- [ ] **Pixelize** — configurable block size, alignment anchor, and nearest-color sampling behavior.
+- [x] **Palettize (prototype)** — current/default/preset mapping with Euclidean RGB distance is present; palette-index repair, a documented distance policy, swatch preview, and optional dithering remain open.
+- [x] **Pixelize (prototype)** — configurable averaged block size and live preview are present; alpha-weighting, alignment anchor, and sampling policy remain open.
 - [x] **Posterize** — configurable per-channel or luminance level count with stable quantization.
-- [ ] **Gradient Fill** — configurable linear/radial gradient generation using the shared ramp and geometry editor in 6.3.2.
-- [ ] **Gradient Map** — map luminance through an editable color ramp while preserving alpha.
+- [x] **Gradient Fill (prototype)** — linear/radial generation, bounded stops, interpolation, color processing, edge modes, dithering, Replace/Alpha Blend, shared targeting, validation, and allocation-free sampling are present; direct canvas handle interaction and the broad exit-gate matrix remain.
+- [x] **Gradient Map (prototype)** — luminance mapping through the shared validated ramp preserves alpha and obeys the unified target region; the broad exit-gate matrix remains.
 
 #### 6.3.1 Color adjustment dialog
 
@@ -498,42 +510,79 @@ Use PixelBuddy-oriented labels rather than copying the reference dialog literall
 - [ ] Provide synchronized sliders and fixed-width numeric fields for **Hue Shift**, **Saturation**, and **Brightness/Value**; changing any control must update the preview immediately without resizing the dialog.
 - [x] Use explicit neutral values and bounded ranges, with a **Reset** action that returns all three adjustments to zero without closing the dialog.
 - [x] Preserve alpha and fully transparent pixel data unless a later effect explicitly advertises otherwise.
-- [ ] Offer a clear target control such as **Active Layer** or **Current Selection**. Selection targeting is available only when a non-empty selection exists and must never affect pixels outside it.
+- [x] Offer one **Active Layer** or **Current Selection** target control. Selection targeting is available only for a non-empty clipped selection and never affects or samples pixels outside it.
 - [x] Keep the source project unchanged while previewing. The effect-owned preview document is rendered by the main canvas and modal preview; **Apply** alone enters the editor mutation path, while **Cancel**, Escape, and close discard preview state.
-- [x] Block canvas tools, shortcuts, frame changes, and other document mutations while the modal owns the preview.
+- [x] Use a true modal/provenance boundary that blocks canvas tools, shortcuts, playback, frame/layer controls, and other UI mutations; project replacement clears the transaction and stale provenance rejects Apply.
 - [ ] Test positive/negative range boundaries, zero/no-op, selection clipping, transparent pixels, numeric-field width, Apply/Cancel, undo/redo, and native/WASM color parity.
 
 Suggested user-facing names are **Adjust Color**, **Hue Shift**, **Saturation**, **Brightness/Value**, **Target**, **Reset**, **Apply**, and **Cancel**. These preserve the reference capabilities without copying its labels or layout one-for-one.
 
 #### 6.3.2 Gradient editor
 
-- [ ] Open **Gradient Fill…** as a foreground modal with a bounded live preview of the target pixels.
-- [ ] Provide an editable color ramp with at least two stops. Users can add, select, move, recolor, and remove interior stops while endpoints remain valid.
-- [ ] Reuse the Milestone 6.2 RGB/hex picker for stop colors so RGB, hex, hue, saturation, and value stay synchronized.
-- [ ] Add a **Distribute Stops Evenly** action for multi-stop ramps.
-- [ ] Offer interpolation choices with PixelBuddy names such as **Step**, **Linear**, and **Smooth**; document Smooth as cubic-style interpolation rather than exposing implementation jargon.
-- [ ] Offer color-processing choices **sRGB** and **Linear RGB**, with deterministic native/WASM output and a visible default.
-- [ ] Support **Linear** and **Radial** shapes initially. Linear mode exposes start/end or angle/length controls; radial mode exposes center X/Y and horizontal/vertical radius.
+- [x] Open **Gradient Fill…** as a foreground modal with a bounded live preview of the target pixels.
+- [x] Provide an editable color ramp with 2–32 stops. Users can add, move, recolor, and remove interior stops while endpoints remain fixed and valid.
+- [x] Reuse the Milestone 6.2 RGB/hex picker for stop colors so RGB, hex, hue, saturation, and value stay synchronized.
+- [x] Add a **Distribute Stops Evenly** action for multi-stop ramps.
+- [x] Offer interpolation choices with PixelBuddy names **Step**, **Linear**, and **Smooth**; Smooth uses cubic-style easing.
+- [x] Offer color-processing choices **sRGB** and **Linear RGB**, with a visible default; deterministic native/WASM parity still needs the exit-gate tests.
+- [x] Support **Linear** and **Radial** shapes with numeric start/end and center/radius controls.
 - [ ] Allow radial axes to be linked for a circle or unlinked for an ellipse, and provide a canvas interaction for positioning the center/endpoints without leaking edits to the document.
-- [ ] Offer edge/repetition behavior using clear names such as **Clamp**, **Repeat**, and **Mirror**.
-- [ ] Offer dithering choices beginning with **None**, **Bayer 2×2**, and **Bayer 4×4**. Dithering must be deterministic and clipped to the configured target.
-- [ ] Offer a target control such as **Active Layer** or **Current Selection**; selection mode is disabled when no selection exists.
-- [ ] Define how Gradient Fill combines with existing pixels: start with explicit **Replace** and **Alpha Blend** modes rather than an ambiguous implicit blend.
-- [ ] Validate stop count, geometry, radii, percentages, interpolation, and repeat parameters before allocating preview/output buffers.
-- [ ] Keep the source unchanged during preview. **Apply** creates one undoable dirty edit; **Cancel**, Escape, close, or invalid input restores exact pre-dialog bytes.
-- [ ] Share the ramp editor with **Gradient Map**, but keep the operations distinct: Gradient Fill generates color from canvas geometry, while Gradient Map maps existing luminance through the ramp and preserves alpha.
+- [x] Offer edge/repetition behavior using **Clamp**, **Repeat**, and **Mirror**.
+- [x] Offer dithering choices **None**, **Bayer 2×2**, and **Bayer 4×4**; target clipping and native/WASM regressions remain open.
+- [x] Use the shared **Active Layer** or **Current Selection** target; selection mode is disabled when no clipped selection exists.
+- [x] Provide explicit **Replace** and **Alpha Blend** modes for Gradient Fill.
+- [x] Validate stop count, finite normalized geometry, radii, and percentages before transform output; enum-typed interpolation/repeat modes cannot represent invalid variants.
+- [x] Keep the source unchanged during preview. **Apply** creates one undoable dirty edit unless byte-identical; **Cancel**, Escape, close, or invalid input restores exact pre-dialog bytes.
+- [x] Share the ramp editor with **Gradient Map** while keeping Fill geometry generation distinct from luminance mapping with preserved alpha.
 - [ ] Test stop editing, even distribution, interpolation/color-space modes, linear/radial geometry, linked radii, repeat modes, dithering, selection clipping, blend modes, invalid parameters, Apply/Cancel, undo/redo, cache effects, and native/WASM parity.
 
 Suggested user-facing names are **Gradient Fill**, **Color Ramp**, **Interpolation**, **Color Processing**, **Shape**, **Dithering**, **Edge Mode**, **Center**, **Radius**, **Target**, **Distribute Stops**, **Apply**, and **Cancel**.
+
+### 6.4 Repair Effects transaction safety and correctness — PB-017, PB-018, PB-019
+
+Treat every effect as a document/frame-bound transaction, not merely a floating preview window:
+
+- [x] Pause playback and adopt the visible editing frame before capturing an effect source.
+- [x] Capture document session, active-frame generation, editor revision, active layer, and selection provenance with the effect state.
+- [x] Replace the ordinary effect `egui::Window` with a true foreground modal; shortcuts, playback, canvas input, and surrounding controls cannot mutate the document behind it.
+- [x] Reject and cancel Apply if its captured document/frame/layer/selection provenance is no longer current; project replacement clears any active effect.
+- [x] Reject locked or missing target layers before preview allocation and revalidate immediately before commit.
+- [x] Replace the duplicated general/gradient target state with one explicit **Active Layer** or **Current Selection** control. Disable Selection when no non-empty clipped selection exists.
+- [x] Define selection-local geometry for Offset, Mirror, Rotate, Outline, Drop Shadow, Pixelize, Fill, and Map so pixels outside the target cannot influence or receive the transform unexpectedly.
+- [x] Detect byte-identical previews and return a true no-op: no revision, history entry, dirty state, cache invalidation, or recovery churn.
+- [x] Clamp the selected palette index whenever Palettize replaces the palette; fall back to the default palette if malformed runtime state supplies an empty target.
+- [x] Normalize Drop Shadow alpha compositing through the shared Porter-Duff source-over implementation; chosen shadow-color alpha multiplies source alpha and the opacity control.
+- [x] Make Pixelize averaging alpha-aware so transparent RGB does not darken or tint partially covered blocks.
+- [x] Bound gradient stop count at 32, preserve fixed endpoints, reject non-finite/out-of-range parameters, and use total ordering.
+- [x] Sort and validate gradient stops once per preview refresh rather than cloning and sorting the stop vector for every output pixel.
+- [x] Map normalized gradient endpoints to the first and last visible target pixels so a 0→1 ramp displays both endpoint colors.
+- [ ] Add regressions for playback advance, frame/layer/project changes behind the modal, locked layers, stale provenance, selection/no-selection targets, neutral Apply, palette validity, alpha edges, endpoint colors, maximum stop count, and native/WASM parity.
+
+### 6.5 Consolidate code quality and modularity — PB-020
+
+The earlier Milestone 4 extractions remain valuable, but the current largest files are again substantial: `app.rs` ≈2,864 lines, `effects/mod.rs` ≈1,850, `app/tests.rs` ≈2,085, `timeline_panel.rs` ≈1,341, `canvas_view.rs` ≈1,523, `layers_panel.rs` ≈1,310, and `io/project.rs` ≈1,324.
+
+- [ ] Split `effects/mod.rs` into focused state/parameter, pure-transform, preview/transaction, and egui UI modules. Transform modules must not depend on egui.
+- [ ] Split effect regressions by transform and transaction behavior instead of continuing to grow one inline test module.
+- [ ] Extract remaining app playback/document-command coordination when touched, without recreating broad mutable access to editor internals.
+- [ ] Split `app/tests.rs` by subsystem and separate project encode/decode validation if those files continue growing.
+- [ ] Replace history front-removal loops with a queue-oriented representation or equivalent O(1) oldest-entry eviction while preserving suspended-future semantics and byte budgets.
+- [ ] Make normalized layer opacity and active-layer selection harder to bypass through public fields; route changes through validated methods.
+- [ ] Enforce `MAX_LAYERS_PER_FRAME` in the model-level layer-add operation, not only app/UI callers.
+- [ ] Decide and document transform-quality policies before changing output compatibility: Posterize bucket formula, rounding versus truncation, Palettize RGB versus perceptual distance, and Pixelize sampling/alpha behavior.
+- [ ] Keep the warning, dependency, and asset audits green as modules move; do not use broad lint suppressions to hide structural regressions.
+
 Recommended implementation order:
 
 1. [x] Shared effect preview/commit API and Effects menu shell.
 2. [x] Lossless geometry: Offset, Mirror, and right-angle Rotate.
 3. [x] Deterministic color transforms: Invert, Desaturation, Adjust Color, and Posterize.
-4. [ ] Palette workflow and Palettize, reusing the Milestone 6.1 preset library.
-5. [ ] Outline, Drop Shadow, and Pixelize.
-6. [ ] Gradient Fill and Gradient Map with the shared ramp, interpolation, color-space, geometry, repeat, and dithering editor.
-7. [ ] Full native/WASM performance, undo, cache, and hostile-parameter regression pass.
+4. [ ] Close PB-017 effect modal/provenance corruption paths.
+5. [x] Close PB-018 target, lock, no-op, palette, alpha, and selection contracts.
+6. [x] Close PB-019 gradient correctness, validation, and performance defects.
+7. [ ] Complete Keep Current palette behavior and the visible secondary-color workflow.
+8. [ ] Complete PB-020 Effects decomposition and transform-quality decisions.
+9. [ ] Run the full native/WASM performance, undo, cache, and hostile-parameter regression pass.
 
 ### Milestone 6 exit gate
 
@@ -580,9 +629,9 @@ Immediate next:
 11. [x] Add a byte budget to history — PB-007.
 12. [x] Decompose the largest coordinator/UI files and remove unused direct dependencies — PB-014/PB-015. CI and release hardening continue in Milestone 5.
 13. [x] Harden the release pipeline with MSRV/native/WASM gates, SHA-pinned Actions, cargo-deny, notices, fixtures, and recovery/security documentation; hosted smoke confirmation follows the first push.
-14. [ ] Add project-creation palette presets, redesign the RGB/hex color picker, and implement the explicit-scope raster Effects pipeline — Milestone 6.
+14. [ ] Finish Milestone 6: repair effect transaction safety, complete palette/secondary-color edge cases, harden every transform contract, and modularize the Effects implementation — PB-017 through PB-020.
 
-The deferred palette-policy chooser from Milestone 1.1 remains a product follow-up and should be scheduled after the remaining P0 correctness work unless it becomes necessary for another replacement-flow change.
+The palette-policy chooser deferred from Milestone 1.1 now exists, but Keep Current behavior and policy regressions remain open. PB-017 is the immediate priority because it can apply an effect preview to the wrong frame or overwrite newer document state.
 
 ## Progress log
 
@@ -604,10 +653,13 @@ The deferred palette-policy chooser from Milestone 1.1 remains a product follow-
 | 2026-08-21 | Milestone 3 / PB-006, PB-007, PB-008, PB-011, PB-016 | Complete | Early input/project/recovery budgets, metadata limits, a shared 64 MiB history ceiling, lazy 24×24 thumbnails with a 512-texture LRU, checked allocation sizing, 193 native tests, and WASM test build pass |
 | 2026-08-21 | Milestone 4 / PB-014, PB-015 | Complete | `app.rs` 5,030→2,502 lines; `canvas_view.rs` 2,077→1,421; typed shortcut, dialog, texture, tile-layout, and test modules; atomic fallible resize; dead-code/dependency/asset audit clean; strict native/WASM gates and 193 tests pass |
 | 2026-08-21 | Milestone 5 / release pipeline | Implementation complete; hosted confirmation pending | SHA-pinned Actions and Dependabot; Rust 1.88 format/strict Clippy/195 tests/native release/WASM pass; cargo-deny advisories/licenses/sources pass with one documented unmaintained transitive exception; deterministic notices, hostile fixtures, security/recovery docs, and native/Web smoke checks added |
-| 2026-08-21 | Milestone 6 / palette, picker, and effects roadmap | In progress | Larger fixed RGB/hex picker complete; palette policy remains deferred; 13-effect inventory and detailed Adjust Color/Gradient contracts retained |
+| 2026-08-21 | Milestone 6 / palette, picker, and effects roadmap | In progress | Larger fixed RGB/hex picker complete; built-in preset and replacement-policy infrastructure added; thirteen-effect inventory and detailed Adjust Color/Gradient contracts retained |
 | 2026-08-21 | Responsive right sidebar | Complete for current scope | Replaced fixed 200 px width with a resizable 220–320 px policy (240 px default), stacked Blend Mode controls, and retained width-derived palette columns; full 193-test suite passed at implementation time |
 | 2026-08-21 | Arbitrary canvas dimensions | Complete for current scope | Settings now exposes validated Custom Size flows for New Canvas and Resize Existing Canvas; both retain the 8,192-pixel side and 16,777,216-pixel aggregate safety limits while allowing non-preset dimensions |
 | 2026-08-21 | Milestone 6 / Shared preview performance | Complete for current synchronous effects | Reused active-layer preview buffers, committed the visible preview without recomputation, added bounded Adjust Color caching and bulk wrapped Offset copies, and capped pointer-driven refresh at 30 Hz with immediate final refresh; the reusable escalation path for downsampling/workers is documented above |
-| 2026-08-21 | Milestone 6 / Effects foundation and Rotate | In progress | Seven effects exposed through a shared modal; all receive aspect-correct previews backed by effect-owned documents, so preview/cancel does not dirty project state. Rotate supports arbitrary −180°…180° nearest-neighbor angles plus readable presets; 196 native tests and WASM check pass |
+| 2026-08-21 | Milestone 6 / Effects foundation and Rotate | Superseded by current Milestone 6 status | The original seven-effect foundation expanded to all thirteen planned prototypes; later audit found the window is not a true modal and opened PB-017 through PB-020 |
+| 2026-08-25 | Roadmap reconciliation and current baseline | Active / blockers recorded | 206 native tests and WASM test build pass; formatting and strict Clippy regressions remain. Palette/effect prototypes were reconciled with actual code, PB-017 through PB-020 were added, and valid code-quality work was consolidated into this canonical roadmap |
+| 2026-08-25 | Milestone 6 / PB-017 and PB-018 transaction boundary | In progress | Effects pause and adopt the visible playback frame, capture project/frame/revision/layer/selection provenance, use a true foreground modal, cancel stale Apply, clear on project replacement, reject locked/missing layers, and commit byte-identical previews as clean no-ops. Format, strict Clippy, 210 tests, and WASM checks pass |
+| 2026-08-27 | Milestone 6 / PB-018 and PB-019 effect contracts | Complete | Unified Active Layer/Current Selection targeting, selection-local geometry, palette-index repair, normalized shadow alpha, alpha-weighted Pixelize, bounded and allocation-free gradient sampling, fixed visible endpoints, invalid-gradient rejection, and project-replacement transaction coverage; format, strict Clippy, 221 tests, and WASM checks pass |
 
-Update this table whenever a finding starts, changes scope, or closes. Link a commit or pull request once the intentionally uncommitted remediation work is split into reviewable changes.
+Update this table whenever a finding starts, changes scope, or closes. Link a commit or pull request when the local 27-commit remediation series is pushed or reorganized into reviewable remote changes.

@@ -1,3 +1,5 @@
+pub const MAX_GRADIENT_STOPS: usize = 32;
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum GradientShape {
     Linear,
@@ -37,11 +39,6 @@ pub enum GradientBlendMode {
     AlphaBlend,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum GradientTarget {
-    ActiveLayer,
-    CurrentSelection,
-}
 #[derive(Clone, Debug, PartialEq)]
 pub struct GradientStop {
     pub position: f32, // 0.0 to 1.0
@@ -58,8 +55,6 @@ pub struct GradientState {
     pub edge_mode: GradientEdgeMode,
     pub dithering: GradientDithering,
     pub blend_mode: GradientBlendMode,
-    pub target: GradientTarget,
-
     // Linear specific
     pub linear_start: [f32; 2],
     pub linear_end: [f32; 2],
@@ -90,7 +85,6 @@ impl Default for GradientState {
             edge_mode: GradientEdgeMode::Clamp,
             dithering: GradientDithering::None,
             blend_mode: GradientBlendMode::Replace,
-            target: GradientTarget::ActiveLayer,
             linear_start: [0.0, 0.5],
             linear_end: [1.0, 0.5],
             radial_center: [0.5, 0.5],
@@ -101,11 +95,54 @@ impl Default for GradientState {
 }
 
 impl GradientState {
+    pub fn prepare_for_preview(&mut self) -> bool {
+        let geometry_is_finite = self
+            .linear_start
+            .into_iter()
+            .chain(self.linear_end)
+            .chain(self.radial_center)
+            .chain(self.radial_radius)
+            .all(f32::is_finite);
+        let normalized_geometry_is_bounded = self
+            .linear_start
+            .into_iter()
+            .chain(self.linear_end)
+            .chain(self.radial_center)
+            .all(|value| (0.0..=1.0).contains(&value));
+        if !geometry_is_finite
+            || !normalized_geometry_is_bounded
+            || self
+                .radial_radius
+                .iter()
+                .any(|radius| !(0.01..=2.0).contains(radius))
+            || !(2..=MAX_GRADIENT_STOPS).contains(&self.stops.len())
+            || self
+                .stops
+                .iter()
+                .any(|stop| !stop.position.is_finite() || !(0.0..=1.0).contains(&stop.position))
+        {
+            return false;
+        }
+
+        self.stops
+            .sort_by(|left, right| left.position.total_cmp(&right.position));
+        self.stops[0].position = 0.0;
+        self.stops
+            .last_mut()
+            .expect("two gradient stops were validated above")
+            .position = 1.0;
+        self.selected_stop = self.selected_stop.filter(|index| *index < self.stops.len());
+        true
+    }
+
     pub fn sample_color(&self, mut t: f32) -> [u8; 4] {
         if self.stops.is_empty() {
             return [0, 0, 0, 0];
         }
         if self.stops.len() == 1 {
+            return self.stops[0].color;
+        }
+        if !t.is_finite() {
             return self.stops[0].color;
         }
 
@@ -126,25 +163,32 @@ impl GradientState {
             }
         }
 
-        let mut stops = self.stops.clone();
-        stops.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
+        if t <= self.stops[0].position {
+            return self.stops[0].color;
+        }
+        if t >= self
+            .stops
+            .last()
+            .expect("non-empty stops checked above")
+            .position
+        {
+            return self
+                .stops
+                .last()
+                .expect("non-empty stops checked above")
+                .color;
+        }
 
-        if t <= stops[0].position {
-            return stops[0].color;
-        }
-        if t >= stops.last().unwrap().position {
-            return stops.last().unwrap().color;
-        }
-
-        let mut lower = &stops[0];
-        let mut upper = &stops[1];
-        for i in 0..stops.len() - 1 {
-            if t >= stops[i].position && t <= stops[i + 1].position {
-                lower = &stops[i];
-                upper = &stops[i + 1];
-                break;
-            }
-        }
+        let (lower, upper) = self
+            .stops
+            .windows(2)
+            .find_map(|pair| {
+                (t >= pair[0].position && t <= pair[1].position).then_some((&pair[0], &pair[1]))
+            })
+            .unwrap_or_else(|| {
+                let last = self.stops.len() - 1;
+                (&self.stops[last - 1], &self.stops[last])
+            });
 
         let range = upper.position - lower.position;
         let mut local_t = if range > 0.0 {
@@ -215,5 +259,56 @@ impl GradientState {
                 [r, g, b, a]
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GradientState, GradientStop, MAX_GRADIENT_STOPS};
+
+    #[test]
+    fn preview_preparation_sorts_once_and_preserves_endpoints() {
+        let mut gradient = GradientState {
+            stops: vec![
+                GradientStop {
+                    position: 0.8,
+                    color: [80, 0, 0, 255],
+                },
+                GradientStop {
+                    position: 0.2,
+                    color: [20, 0, 0, 255],
+                },
+                GradientStop {
+                    position: 0.5,
+                    color: [50, 0, 0, 255],
+                },
+            ],
+            ..GradientState::default()
+        };
+
+        assert!(gradient.prepare_for_preview());
+        assert_eq!(gradient.stops[0].position, 0.0);
+        assert_eq!(gradient.stops[1].position, 0.5);
+        assert_eq!(gradient.stops[2].position, 1.0);
+        assert_eq!(gradient.sample_color(0.0), [20, 0, 0, 255]);
+        assert_eq!(gradient.sample_color(1.0), [80, 0, 0, 255]);
+    }
+
+    #[test]
+    fn preview_preparation_rejects_non_finite_and_excessive_inputs() {
+        let mut non_finite = GradientState::default();
+        non_finite.stops[0].position = f32::NAN;
+        assert!(!non_finite.prepare_for_preview());
+
+        let mut excessive = GradientState {
+            stops: (0..=MAX_GRADIENT_STOPS)
+                .map(|index| GradientStop {
+                    position: index as f32 / MAX_GRADIENT_STOPS as f32,
+                    color: [index as u8, 0, 0, 255],
+                })
+                .collect(),
+            ..GradientState::default()
+        };
+        assert!(!excessive.prepare_for_preview());
     }
 }
