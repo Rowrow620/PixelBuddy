@@ -849,7 +849,7 @@ pub fn show_layers(ctx: &egui::Context, app: &mut PixelBuddyApp, ui: &mut egui::
                 ] {
                     let mut mode_var = app.editor.document().layers[active].blend_mode;
                     if ui
-                        .selectable_value(&mut mode_var, *mode, format!("{:?}", mode))
+                        .selectable_value(&mut mode_var, *mode, format!("{mode:?}"))
                         .changed()
                     {
                         app.set_layer_blend_mode_current_frame(active, *mode);

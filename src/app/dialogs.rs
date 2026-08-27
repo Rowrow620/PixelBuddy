@@ -191,7 +191,7 @@ impl PixelBuddyApp {
                         }
                     };
 
-                    ui.label(egui::RichText::new(format!("Applying Palette: {}", name)).strong());
+                    ui.label(egui::RichText::new(format!("Applying Palette: {name}")).strong());
                     ui.horizontal(|ui| {
                         let swatch_size = egui::Vec2::splat(12.0);
                         for &c in colors.iter().take(16) {
