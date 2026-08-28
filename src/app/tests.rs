@@ -7,7 +7,7 @@ use super::{
     RasterExportSizing, ShortcutPermissions, SpriteSheetImportMode, TileMode, ViewPreferences,
     MAX_TILE_PREVIEW_COUNT, RECOVERY_STORAGE_KEY, VIEW_PREFERENCES_STORAGE_KEY,
 };
-use crate::document::{AnimationManager, BlendMode, Document};
+use crate::document::{AnimationManager, BlendMode, Document, Palette};
 use crate::editor::{ClipboardBuffer, EditorState};
 use crate::io::{ExportFormat, ProjectSaveSource};
 use eframe::Storage;
@@ -518,7 +518,10 @@ fn dirty_project_replacement_waits_and_cancel_preserves_the_project() {
         Some(DocumentReplacement::NewDocument {
             width: 4,
             height: 4,
-            palette_policy: super::PalettePolicy::UseDefault,
+            palette_choice: super::ResolvedPalettePolicy {
+                requested: super::PalettePolicy::UseDefault,
+                ..
+            },
         })
     ));
 
@@ -548,7 +551,10 @@ fn later_replacement_request_cannot_change_the_pending_target() {
         Some(DocumentReplacement::NewDocument {
             width: 4,
             height: 4,
-            palette_policy: super::PalettePolicy::UseDefault,
+            palette_choice: super::ResolvedPalettePolicy {
+                requested: super::PalettePolicy::UseDefault,
+                ..
+            },
         })
     ));
     assert!(app
@@ -562,6 +568,168 @@ fn later_replacement_request_cannot_change_the_pending_target() {
         (app.editor.document().width, app.editor.document().height),
         (4, 4)
     );
+}
+
+#[test]
+fn project_creation_palette_policy_matrix_commits_exactly_on_every_frame() {
+    let current_palette = Palette {
+        colors: vec![[3, 4, 5, 255], [40, 50, 60, 255], [90, 80, 70, 255]],
+        selected_index: 2,
+    };
+    let choices = [
+        (super::PalettePolicy::KeepCurrent, current_palette.clone()),
+        (
+            super::PalettePolicy::UseDefault,
+            crate::document::palette_library::default_palette(),
+        ),
+        (
+            super::PalettePolicy::UsePreset("gameboy".to_owned()),
+            crate::document::palette_library::preset_palette_or_default("gameboy"),
+        ),
+    ];
+
+    for source in 0..3 {
+        for (policy, expected_palette) in &choices {
+            let mut app = PixelBuddyApp::new(8, 8);
+            app.editor.animation.current_doc_mut().palette = current_palette.clone();
+            app.editor.primary_color = [10, 20, 30, 255];
+            app.editor.secondary_color = [40, 50, 60, 255];
+            app.editor.active_tool = crate::editor::ToolType::Ellipse;
+            app.editor.brush_size = 7;
+            app.tile_mode = TileMode::Both;
+
+            match source {
+                0 => app.request_new_document(4, 3, policy.clone()),
+                1 => {
+                    let mut document = Document::new(4, 3);
+                    document
+                        .active_layer_mut()
+                        .canvas
+                        .set_pixel(2, 1, [9, 8, 7, 255]);
+                    app.request_imported_image(document, "sprite.png".to_owned(), policy.clone());
+                }
+                2 => {
+                    let mut animation = AnimationManager::new(Document::new(4, 3));
+                    animation.frames[0]
+                        .document
+                        .active_layer_mut()
+                        .canvas
+                        .set_pixel(0, 0, [1, 2, 3, 255]);
+                    animation.add_frame();
+                    animation
+                        .current_doc_mut()
+                        .active_layer_mut()
+                        .canvas
+                        .set_pixel(1, 0, [4, 5, 6, 255]);
+                    app.request_imported_animation(
+                        animation,
+                        "walk.png".to_owned(),
+                        policy.clone(),
+                    );
+                }
+                _ => unreachable!(),
+            }
+
+            assert!(app
+                .editor
+                .animation
+                .frames
+                .iter()
+                .all(|frame| frame.document.palette == *expected_palette));
+            assert_eq!(app.editor.primary_color, [0, 0, 0, 255]);
+            assert_eq!(app.editor.secondary_color, [255, 255, 255, 255]);
+            assert_eq!(app.editor.active_tool, crate::editor::ToolType::Pencil);
+            assert_eq!(app.editor.brush_size, 1);
+            assert_eq!(app.tile_mode, TileMode::Both);
+
+            if source == 1 {
+                assert_eq!(
+                    app.editor.document().active_layer().canvas.get_pixel(2, 1),
+                    [9, 8, 7, 255]
+                );
+            } else if source == 2 {
+                assert_eq!(app.editor.animation.frames.len(), 2);
+                assert_eq!(
+                    app.editor.animation.frames[0]
+                        .document
+                        .active_layer()
+                        .canvas
+                        .get_pixel(0, 0),
+                    [1, 2, 3, 255]
+                );
+                assert_eq!(
+                    app.editor.animation.frames[1]
+                        .document
+                        .active_layer()
+                        .canvas
+                        .get_pixel(1, 0),
+                    [4, 5, 6, 255]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn dirty_palette_replacement_is_atomic_and_freezes_the_resolved_palette() {
+    let captured_palette = Palette {
+        colors: vec![[12, 34, 56, 255], [78, 90, 123, 255]],
+        selected_index: 1,
+    };
+
+    let mut canceled = PixelBuddyApp::new(8, 8);
+    canceled.editor.animation.current_doc_mut().palette = captured_palette.clone();
+    canceled.apply_tool_changes(vec![(0, 0, [1, 2, 3, 255])]);
+    let before = crate::io::project::encode_editor_bytes(&canceled.editor)
+        .expect("the outgoing project should encode");
+    canceled.request_new_document(4, 4, super::PalettePolicy::KeepCurrent);
+    canceled.new_project_palette_policy = super::PalettePolicy::UsePreset("gameboy".to_owned());
+    canceled.cancel_pending_document_replacement();
+    assert_eq!(
+        crate::io::project::encode_editor_bytes(&canceled.editor)
+            .expect("the canceled project should still encode"),
+        before
+    );
+
+    let mut confirmed = PixelBuddyApp::new(8, 8);
+    confirmed.editor.animation.current_doc_mut().palette = captured_palette.clone();
+    confirmed.editor.mark_dirty();
+    confirmed.request_new_document(4, 4, super::PalettePolicy::KeepCurrent);
+    assert!(matches!(
+        confirmed.pending_replacement.as_ref(),
+        Some(DocumentReplacement::NewDocument {
+            palette_choice: super::ResolvedPalettePolicy { palette, .. },
+            ..
+        }) if *palette == captured_palette
+    ));
+
+    confirmed.new_project_palette_policy = super::PalettePolicy::UseDefault;
+    confirmed.editor.animation.current_doc_mut().palette =
+        crate::document::palette_library::preset_palette_or_default("c64");
+    confirmed.confirm_pending_document_replacement();
+
+    assert_eq!(confirmed.editor.document().palette, captured_palette);
+}
+
+#[test]
+fn missing_palette_preset_falls_back_to_default_on_every_imported_frame() {
+    let mut animation = AnimationManager::new(Document::new(3, 2));
+    animation.add_frame();
+    let mut app = PixelBuddyApp::new(8, 8);
+
+    app.request_imported_animation(
+        animation,
+        "walk.png".to_owned(),
+        super::PalettePolicy::UsePreset("retired-id".to_owned()),
+    );
+
+    let expected = crate::document::palette_library::default_palette();
+    assert!(app
+        .editor
+        .animation
+        .frames
+        .iter()
+        .all(|frame| frame.document.palette == expected));
 }
 
 #[test]

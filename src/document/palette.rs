@@ -6,7 +6,7 @@ pub struct Palette {
 
 impl Default for Palette {
     fn default() -> Self {
-        crate::document::palette_library::default_preset().to_palette()
+        crate::document::palette_library::default_palette()
     }
 }
 

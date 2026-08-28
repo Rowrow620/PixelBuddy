@@ -26,8 +26,25 @@ struct CompactPickerColorState {
     hex_text: String,
 }
 
-fn compact_picker_color_state_id() -> egui::Id {
-    egui::Id::new("pixelbuddy.compact_primary_color_picker_state")
+fn compact_picker_color_state_id(popup_id: egui::Id) -> egui::Id {
+    popup_id.with("color_state")
+}
+
+fn format_opaque_hex(color: Color32) -> String {
+    format!("{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
+}
+
+fn parse_opaque_hex(text: &str) -> Option<Color32> {
+    let trimmed = text.trim().strip_prefix('#').unwrap_or(text.trim());
+    if trimmed.len() != 6 {
+        return None;
+    }
+    let parsed = u32::from_str_radix(trimmed, 16).ok()?;
+    Some(Color32::from_rgb(
+        ((parsed >> 16) & 0xFF) as u8,
+        ((parsed >> 8) & 0xFF) as u8,
+        (parsed & 0xFF) as u8,
+    ))
 }
 
 fn compact_contrast_color(color: Color32) -> Color32 {
@@ -295,9 +312,12 @@ fn compact_hue_picker(
     response
 }
 
-fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool {
+fn compact_color_picker_color32(
+    ui: &mut egui::Ui,
+    state_id: egui::Id,
+    color: &mut Color32,
+) -> bool {
     let original_color = *color;
-    let state_id = compact_picker_color_state_id();
 
     let mut state = ui
         .data(|data| data.get_temp::<CompactPickerColorState>(state_id))
@@ -305,12 +325,7 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
         .unwrap_or_else(|| CompactPickerColorState {
             color: original_color,
             hsvag: HsvaGamma::from(original_color),
-            hex_text: format!(
-                "{:02x}{:02x}{:02x}",
-                original_color.r(),
-                original_color.g(),
-                original_color.b()
-            ),
+            hex_text: format_opaque_hex(original_color),
         });
 
     let mut hsvag = state.hsvag;
@@ -372,13 +387,9 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
         // Validate hex length
         let trimmed = state.hex_text.trim_start_matches('#');
         if trimmed.len() == 6 {
-            if let Ok(parsed) = u32::from_str_radix(trimmed, 16) {
+            if let Some(new_color) = parse_opaque_hex(&state.hex_text) {
                 if hex_changed {
-                    let r = ((parsed >> 16) & 0xFF) as u8;
-                    let g = ((parsed >> 8) & 0xFF) as u8;
-                    let b = (parsed & 0xFF) as u8;
-                    let new_c = Color32::from_rgb(r, g, b);
-                    hsvag = HsvaGamma::from(new_c);
+                    hsvag = HsvaGamma::from(new_color);
                     external_hsv_changed = true;
                 }
             } else {
@@ -394,12 +405,7 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
     let updated_color = Color32::from(hsvag);
 
     if updated_color != original_color {
-        state.hex_text = format!(
-            "{:02x}{:02x}{:02x}",
-            updated_color.r(),
-            updated_color.g(),
-            updated_color.b()
-        );
+        state.hex_text = format_opaque_hex(updated_color);
     }
 
     ui.data_mut(|data| {
@@ -421,7 +427,7 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
     }
 }
 
-/// Renders the primary-color swatch and its compact picker popup.
+/// Renders one color swatch and its compact picker popup.
 ///
 /// `egui`'s stock color-edit button uses a 275px color field, which is too
 /// large for PixelBuddy's 200px sidebar. This mirrors its popup behavior
@@ -429,9 +435,11 @@ fn compact_color_picker_color32(ui: &mut egui::Ui, color: &mut Color32) -> bool 
 pub(crate) fn compact_color_picker_popup(
     ui: &mut egui::Ui,
     id_salt: &str,
+    hover_text: &str,
     color: &mut Color32,
 ) -> egui::Response {
     let popup_id = ui.make_persistent_id(id_salt);
+    let state_id = compact_picker_color_state_id(popup_id);
     let is_open = ui.memory(|memory| memory.is_popup_open(popup_id));
 
     let (rect, mut response) =
@@ -452,7 +460,7 @@ pub(crate) fn compact_color_picker_popup(
         egui::StrokeKind::Inside,
     );
 
-    response = response.on_hover_text("Edit primary color");
+    response = response.on_hover_text(hover_text);
     if response.clicked() {
         ui.memory_mut(|memory| memory.toggle_popup(popup_id));
     }
@@ -477,7 +485,7 @@ pub(crate) fn compact_color_picker_popup(
             .show(ui.ctx(), |popup_ui| {
                 popup_ui.spacing_mut().slider_width = COMPACT_COLOR_PICKER_SLIDER_WIDTH;
                 egui::Frame::popup(ui.style()).show(popup_ui, |popup_ui| {
-                    if compact_color_picker_color32(popup_ui, color) {
+                    if compact_color_picker_color32(popup_ui, state_id, color) {
                         response.mark_changed();
                     }
                 });
@@ -506,6 +514,80 @@ enum PaletteAction {
 enum PaletteVerticalDirection {
     Up,
     Down,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EditorColorSlot {
+    Primary,
+    Secondary,
+}
+
+fn set_editor_color(app: &mut PixelBuddyApp, slot: EditorColorSlot, color: [u8; 4]) {
+    match slot {
+        EditorColorSlot::Primary => app.editor.set_primary_color(color),
+        EditorColorSlot::Secondary => app.editor.set_secondary_color(color),
+    }
+}
+
+/// Draws the editor's foreground/background color pair in right-to-left order.
+/// Primary stays at the outer edge as the active drawing color, while the
+/// visible labels and Swap control keep the secondary gradient endpoint clear.
+fn show_active_color_controls(
+    ui: &mut egui::Ui,
+    app: &mut PixelBuddyApp,
+) -> (egui::Response, egui::Response, egui::Response) {
+    ui.add_space(8.0);
+
+    let mut primary = Color32::from_rgba_unmultiplied(
+        app.editor.primary_color[0],
+        app.editor.primary_color[1],
+        app.editor.primary_color[2],
+        app.editor.primary_color[3],
+    );
+    let primary_response = compact_color_picker_popup(
+        ui,
+        "pixelbuddy.primary_color_picker",
+        "Primary color — drawing color; click to edit",
+        &mut primary,
+    );
+    ui.painter().rect_stroke(
+        primary_response.rect,
+        2.0,
+        Stroke::new(2.0, ui.visuals().selection.bg_fill),
+        egui::StrokeKind::Inside,
+    );
+    if primary_response.changed() {
+        set_editor_color(app, EditorColorSlot::Primary, primary.to_array());
+    }
+    ui.label(egui::RichText::new("P").strong())
+        .on_hover_text("Primary drawing color");
+
+    let mut secondary = Color32::from_rgba_unmultiplied(
+        app.editor.secondary_color[0],
+        app.editor.secondary_color[1],
+        app.editor.secondary_color[2],
+        app.editor.secondary_color[3],
+    );
+    let secondary_response = compact_color_picker_popup(
+        ui,
+        "pixelbuddy.secondary_color_picker",
+        "Secondary color — gradient endpoint; click to edit",
+        &mut secondary,
+    );
+    if secondary_response.changed() {
+        set_editor_color(app, EditorColorSlot::Secondary, secondary.to_array());
+    }
+    ui.label(egui::RichText::new("S").strong())
+        .on_hover_text("Secondary gradient color");
+
+    let swap_response = ui
+        .small_button("Swap")
+        .on_hover_text("Swap primary and secondary colors (X)");
+    if swap_response.clicked() {
+        app.editor.swap_colors();
+    }
+
+    (primary_response, secondary_response, swap_response)
 }
 
 /// Returns the number of fixed-size swatches that fit on a palette row.
@@ -884,26 +966,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                     .layout(egui::Layout::right_to_left(egui::Align::Center)),
             );
 
-            let mut color32 = egui::Color32::from_rgba_unmultiplied(
-                app.editor.primary_color[0],
-                app.editor.primary_color[1],
-                app.editor.primary_color[2],
-                app.editor.primary_color[3],
-            );
-
-            // Add a little margin on the right so it doesn't touch the very edge
-            child_ui.add_space(8.0);
-
-            if compact_color_picker_popup(
-                &mut child_ui,
-                "pixelbuddy.primary_color_picker",
-                &mut color32,
-            )
-            .changed()
-            {
-                let arr = color32.to_array();
-                app.editor.set_primary_color(arr);
-            }
+            show_active_color_controls(&mut child_ui, app);
             ui.separator();
 
             let selected = app.editor.document().palette.selected_index;
@@ -1254,9 +1317,13 @@ pub(crate) fn draw_layer_row_ui(
 #[cfg(test)]
 mod tests {
     use super::{
-        compact_picker_marker_radius, palette_grid_column_count, palette_vertical_move_target,
-        PaletteVerticalDirection, COMPACT_COLOR_PICKER_MARKER_RADIUS,
+        compact_picker_color_state_id, compact_picker_marker_radius, format_opaque_hex,
+        palette_grid_column_count, palette_vertical_move_target, parse_opaque_hex,
+        set_editor_color, show_active_color_controls, CompactPickerColorState, EditorColorSlot,
+        PaletteVerticalDirection, COMPACT_COLOR_PICKER_MARKER_RADIUS, SIDEBAR_MIN_WIDTH,
     };
+    use crate::app::PixelBuddyApp;
+    use egui::ecolor::HsvaGamma;
 
     #[test]
     fn palette_grid_column_count_accounts_for_inter_swatch_spacing() {
@@ -1310,5 +1377,113 @@ mod tests {
 
         let constrained_field = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(6.0, 8.0));
         assert_eq!(compact_picker_marker_radius(constrained_field), 3.0);
+    }
+
+    #[test]
+    fn opaque_hex_parsing_and_formatting_are_fixed_width_and_case_insensitive() {
+        let color = egui::Color32::from_rgb(0x0A, 0xBC, 0xF0);
+        assert_eq!(parse_opaque_hex("0abcf0"), Some(color));
+        assert_eq!(parse_opaque_hex("#0ABCF0"), Some(color));
+        assert_eq!(format_opaque_hex(color), "0abcf0");
+        assert_eq!(parse_opaque_hex("#fff"), None);
+        assert_eq!(parse_opaque_hex("#gggggg"), None);
+        assert_eq!(parse_opaque_hex("00112233"), None);
+    }
+
+    #[test]
+    fn picker_state_is_namespaced_by_popup_id() {
+        let ctx = egui::Context::default();
+        let primary_id = compact_picker_color_state_id(egui::Id::new("primary"));
+        let secondary_id = compact_picker_color_state_id(egui::Id::new("secondary"));
+        let gradient_id = compact_picker_color_state_id(egui::Id::new("gradient-stop"));
+        assert_ne!(primary_id, secondary_id);
+        assert_ne!(primary_id, gradient_id);
+        assert_ne!(secondary_id, gradient_id);
+
+        let primary_color = egui::Color32::from_rgb(80, 80, 80);
+        let secondary_color = egui::Color32::from_rgb(120, 120, 120);
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                primary_id,
+                CompactPickerColorState {
+                    color: primary_color,
+                    hsvag: HsvaGamma::from(primary_color),
+                    hex_text: "primary-draft".to_owned(),
+                },
+            );
+            data.insert_temp(
+                secondary_id,
+                CompactPickerColorState {
+                    color: secondary_color,
+                    hsvag: HsvaGamma::from(secondary_color),
+                    hex_text: "secondary-draft".to_owned(),
+                },
+            );
+        });
+
+        assert_eq!(
+            ctx.data(|data| {
+                data.get_temp::<CompactPickerColorState>(primary_id)
+                    .expect("primary picker state")
+                    .hex_text
+            }),
+            "primary-draft"
+        );
+        assert_eq!(
+            ctx.data(|data| {
+                data.get_temp::<CompactPickerColorState>(secondary_id)
+                    .expect("secondary picker state")
+                    .hex_text
+            }),
+            "secondary-draft"
+        );
+    }
+
+    #[test]
+    fn color_slot_binding_changes_only_the_requested_editor_color() {
+        let mut app = PixelBuddyApp::new(4, 4);
+        let original_primary = app.editor.primary_color;
+        let original_palette = app.editor.document().palette.clone();
+        let original_pixel = app.editor.document().active_layer().canvas.get_pixel(0, 0);
+        let initial_revision = app.editor.revision();
+
+        set_editor_color(&mut app, EditorColorSlot::Secondary, [12, 34, 56, 255]);
+        assert_eq!(app.editor.primary_color, original_primary);
+        assert_eq!(app.editor.secondary_color, [12, 34, 56, 255]);
+        assert_eq!(app.editor.revision(), initial_revision + 1);
+        assert_eq!(app.editor.document().palette, original_palette);
+        assert_eq!(
+            app.editor.document().active_layer().canvas.get_pixel(0, 0),
+            original_pixel
+        );
+
+        set_editor_color(&mut app, EditorColorSlot::Secondary, [12, 34, 56, 255]);
+        assert_eq!(app.editor.revision(), initial_revision + 1);
+
+        set_editor_color(&mut app, EditorColorSlot::Primary, [90, 80, 70, 255]);
+        assert_eq!(app.editor.primary_color, [90, 80, 70, 255]);
+        assert_eq!(app.editor.secondary_color, [12, 34, 56, 255]);
+        assert_eq!(app.editor.revision(), initial_revision + 2);
+    }
+
+    #[test]
+    fn primary_secondary_and_swap_controls_fit_the_minimum_sidebar_width() {
+        let app = std::cell::RefCell::new(PixelBuddyApp::new(4, 4));
+        egui::__run_test_ui(|ui| {
+            ui.set_width(SIDEBAR_MIN_WIDTH);
+            let (primary, secondary, swap) = ui
+                .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    show_active_color_controls(ui, &mut app.borrow_mut())
+                })
+                .inner;
+
+            assert!(primary.rect.width() > 0.0);
+            assert!(secondary.rect.width() > 0.0);
+            assert!(swap.rect.width() > 0.0);
+            assert!(primary.rect.min.x > secondary.rect.min.x);
+            assert!(secondary.rect.min.x > swap.rect.min.x);
+            assert!(!primary.rect.intersects(secondary.rect));
+            assert!(!secondary.rect.intersects(swap.rect));
+        });
     }
 }

@@ -1,5 +1,28 @@
 use super::*;
 
+fn draw_palette_preview(ui: &mut egui::Ui, label: &str, palette: &Palette) {
+    ui.label(egui::RichText::new(label).strong());
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let swatch_size = egui::Vec2::splat(12.0);
+        for &color in palette.colors.iter().take(16) {
+            let color =
+                egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
+            let (rect, response) = ui.allocate_exact_size(swatch_size, egui::Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, color);
+            response.on_hover_text(format!(
+                "#{:02X}{:02X}{:02X}",
+                color.r(),
+                color.g(),
+                color.b()
+            ));
+        }
+        if palette.colors.len() > 16 {
+            ui.label(format!("+{}", palette.colors.len() - 16));
+        }
+    });
+}
+
 impl PixelBuddyApp {
     pub(super) fn draw_palette_policy_selector(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
@@ -34,6 +57,13 @@ impl PixelBuddyApp {
                     }
                 });
         });
+
+        let preview = self.resolve_palette_policy(self.new_project_palette_policy.clone());
+        draw_palette_preview(
+            ui,
+            &format!("Preview: {}", preview.display_name()),
+            &preview.palette,
+        );
     }
 
     pub(super) fn show_project_lifecycle_dialogs(&mut self, ctx: &egui::Context) {
@@ -160,51 +190,23 @@ impl PixelBuddyApp {
                 ui.label("Save the project first if you want to keep its latest changes.");
                 ui.add_space(8.0);
 
-                let palette_policy = match self.pending_replacement.as_ref().unwrap() {
-                    DocumentReplacement::NewDocument { palette_policy, .. } => Some(palette_policy),
-                    DocumentReplacement::ImportedImage { palette_policy, .. } => {
-                        Some(palette_policy)
+                let palette_choice = match self.pending_replacement.as_ref().unwrap() {
+                    DocumentReplacement::NewDocument { palette_choice, .. } => Some(palette_choice),
+                    DocumentReplacement::ImportedImage { palette_choice, .. } => {
+                        Some(palette_choice)
                     }
-                    DocumentReplacement::ImportedAnimation { palette_policy, .. } => {
-                        Some(palette_policy)
+                    DocumentReplacement::ImportedAnimation { palette_choice, .. } => {
+                        Some(palette_choice)
                     }
                     _ => None,
                 };
 
-                if let Some(policy) = palette_policy {
-                    let (name, colors) = match policy {
-                        PalettePolicy::KeepCurrent => (
-                            "Keeping current palette".to_owned(),
-                            self.editor.document().palette.colors.clone(),
-                        ),
-                        PalettePolicy::UseDefault => {
-                            let p = crate::document::palette_library::default_preset();
-                            (p.name.to_owned(), p.colors.to_vec())
-                        }
-                        PalettePolicy::UsePreset(id) => {
-                            if let Some(p) = crate::document::palette_library::get_preset(id) {
-                                (p.name.to_owned(), p.colors.to_vec())
-                            } else {
-                                let p = crate::document::palette_library::default_preset();
-                                (p.name.to_owned(), p.colors.to_vec())
-                            }
-                        }
-                    };
-
-                    ui.label(egui::RichText::new(format!("Applying Palette: {name}")).strong());
-                    ui.horizontal(|ui| {
-                        let swatch_size = egui::Vec2::splat(12.0);
-                        for &c in colors.iter().take(16) {
-                            let color =
-                                egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
-                            let (rect, _response) =
-                                ui.allocate_exact_size(swatch_size, egui::Sense::hover());
-                            ui.painter().rect_filled(rect, 0.0, color);
-                        }
-                        if colors.len() > 16 {
-                            ui.label("...");
-                        }
-                    });
+                if let Some(choice) = palette_choice {
+                    draw_palette_preview(
+                        ui,
+                        &format!("Applying palette: {}", choice.display_name()),
+                        &choice.palette,
+                    );
                     ui.add_space(8.0);
                 }
 

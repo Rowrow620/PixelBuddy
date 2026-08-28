@@ -1065,6 +1065,26 @@ mod tests {
     }
 
     #[test]
+    fn swapping_colors_is_one_dirty_change_and_matching_colors_are_a_noop() {
+        let mut editor = EditorState::new(2, 2);
+        editor.primary_color = [1, 2, 3, 255];
+        editor.secondary_color = [4, 5, 6, 255];
+        let revision = editor.revision();
+
+        editor.swap_colors();
+        assert_eq!(editor.primary_color, [4, 5, 6, 255]);
+        assert_eq!(editor.secondary_color, [1, 2, 3, 255]);
+        assert_eq!(editor.revision(), revision + 1);
+
+        editor.mark_saved();
+        editor.secondary_color = editor.primary_color;
+        let revision = editor.revision();
+        editor.swap_colors();
+        assert_eq!(editor.revision(), revision);
+        assert!(!editor.is_dirty());
+    }
+
+    #[test]
     fn delayed_save_cannot_clear_a_newer_revision() {
         let mut editor = EditorState::new(2, 2);
         let initial_revision = editor.revision();

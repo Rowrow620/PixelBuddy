@@ -349,11 +349,10 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                             ("128×128", 128),
                         ] {
                             if ui.button(label).clicked() {
-                                app.request_new_document(
-                                    dim,
-                                    dim,
-                                    crate::app::PalettePolicy::UseDefault,
-                                );
+                                app.new_width = dim.to_string();
+                                app.new_height = dim.to_string();
+                                app.new_document_error = None;
+                                app.show_new_dialog = true;
                                 ui.close_menu();
                             }
                         }

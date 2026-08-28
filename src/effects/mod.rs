@@ -517,22 +517,15 @@ impl ActiveEffectState {
                         self.original_document.palette.colors.clone()
                     }
                     crate::app::PalettePolicy::UseDefault => {
-                        crate::document::palette_library::default_preset()
-                            .to_palette()
-                            .colors
+                        crate::document::palette_library::default_palette().colors
                     }
                     crate::app::PalettePolicy::UsePreset(id) => {
-                        crate::document::palette_library::get_preset(id)
-                            .unwrap_or_else(crate::document::palette_library::default_preset)
-                            .to_palette()
-                            .colors
+                        crate::document::palette_library::preset_palette_or_default(id).colors
                     }
                 };
 
                 let target_palette = if target_palette.is_empty() {
-                    crate::document::palette_library::default_preset()
-                        .to_palette()
-                        .colors
+                    crate::document::palette_library::default_palette().colors
                 } else {
                     target_palette
                 };
@@ -1304,6 +1297,7 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                             if crate::ui::layers_panel::compact_color_picker_popup(
                                 ui,
                                 &format!("grad_stop_{i}"),
+                                "Edit gradient stop color",
                                 &mut c,
                             )
                             .changed()

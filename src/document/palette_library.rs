@@ -1,5 +1,13 @@
 use super::Palette;
 
+pub const DEFAULT_PRESET_ID: &str = "pico-8";
+const EMERGENCY_DEFAULT_COLORS: &[[u8; 4]] = &[[0, 0, 0, 255]];
+const EMERGENCY_DEFAULT_PRESET: PalettePreset = PalettePreset {
+    id: "emergency-default",
+    name: "Safe Default",
+    colors: EMERGENCY_DEFAULT_COLORS,
+};
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PalettePreset {
     pub id: &'static str,
@@ -71,7 +79,7 @@ pub const PRESETS: &[PalettePreset] = &[
 ];
 
 pub fn default_preset() -> PalettePreset {
-    PRESETS[0].clone()
+    get_preset(DEFAULT_PRESET_ID).unwrap_or_else(|| EMERGENCY_DEFAULT_PRESET.clone())
 }
 
 pub fn get_preset(id: &str) -> Option<PalettePreset> {
@@ -79,10 +87,124 @@ pub fn get_preset(id: &str) -> Option<PalettePreset> {
 }
 
 impl PalettePreset {
-    pub fn to_palette(&self) -> Palette {
-        Palette {
+    /// Converts a built-in candidate only when it satisfies the persisted
+    /// palette contract. Keeping this validation at the library boundary makes
+    /// a malformed future preset fail closed instead of entering a project.
+    pub fn to_palette(&self) -> Option<Palette> {
+        let valid_metadata = !self.id.trim().is_empty()
+            && !self.name.trim().is_empty()
+            && !self.id.chars().any(char::is_control)
+            && !self.name.chars().any(char::is_control);
+        let valid_colors = !self.colors.is_empty()
+            && self.colors.len() <= super::MAX_PALETTE_COLORS
+            && self.colors.iter().all(|color| color[3] == 255);
+
+        (valid_metadata && valid_colors).then(|| Palette {
             colors: self.colors.to_vec(),
             selected_index: 0,
+        })
+    }
+}
+
+/// Returns the explicit built-in default, with a minimal opaque fallback so a
+/// code regression in the preset table can never create an empty palette.
+pub fn default_palette() -> Palette {
+    default_preset().to_palette().unwrap_or_else(|| Palette {
+        colors: vec![[0, 0, 0, 255]],
+        selected_index: 0,
+    })
+}
+
+/// Resolves a named built-in palette, falling back deterministically when an
+/// identifier was removed or its candidate no longer validates.
+pub fn preset_palette_or_default(id: &str) -> Palette {
+    get_preset(id)
+        .and_then(|preset| preset.to_palette())
+        .unwrap_or_else(default_palette)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_palette, default_preset, preset_palette_or_default, PalettePreset,
+        DEFAULT_PRESET_ID, PRESETS,
+    };
+    use crate::document::MAX_PALETTE_COLORS;
+    use std::collections::HashSet;
+
+    #[test]
+    fn shipped_presets_are_unique_valid_and_include_the_explicit_default() {
+        let mut ids = HashSet::new();
+        for preset in PRESETS {
+            assert!(ids.insert(preset.id), "duplicate preset ID: {}", preset.id);
+            assert!(
+                preset.to_palette().is_some(),
+                "invalid preset: {}",
+                preset.id
+            );
         }
+
+        assert_eq!(default_preset().id, DEFAULT_PRESET_ID);
+        assert_eq!(
+            default_palette(),
+            preset_palette_or_default(DEFAULT_PRESET_ID)
+        );
+    }
+
+    #[test]
+    fn preset_validation_accepts_the_limit_and_rejects_invalid_candidates() {
+        let at_limit = Box::leak(vec![[1, 2, 3, 255]; MAX_PALETTE_COLORS].into_boxed_slice());
+        let too_many = Box::leak(vec![[1, 2, 3, 255]; MAX_PALETTE_COLORS + 1].into_boxed_slice());
+        let candidates = [
+            (
+                PalettePreset {
+                    id: "limit",
+                    name: "Limit",
+                    colors: at_limit,
+                },
+                true,
+            ),
+            (
+                PalettePreset {
+                    id: "empty",
+                    name: "Empty",
+                    colors: &[],
+                },
+                false,
+            ),
+            (
+                PalettePreset {
+                    id: "oversized",
+                    name: "Oversized",
+                    colors: too_many,
+                },
+                false,
+            ),
+            (
+                PalettePreset {
+                    id: "transparent",
+                    name: "Transparent",
+                    colors: &[[1, 2, 3, 254]],
+                },
+                false,
+            ),
+            (
+                PalettePreset {
+                    id: "",
+                    name: "Missing ID",
+                    colors: &[[1, 2, 3, 255]],
+                },
+                false,
+            ),
+        ];
+
+        for (candidate, expected_valid) in candidates {
+            assert_eq!(candidate.to_palette().is_some(), expected_valid);
+        }
+    }
+
+    #[test]
+    fn missing_preset_identifier_falls_back_to_the_explicit_default() {
+        assert_eq!(preset_palette_or_default("retired-id"), default_palette());
     }
 }

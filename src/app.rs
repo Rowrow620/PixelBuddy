@@ -1,4 +1,4 @@
-use crate::document::Document;
+use crate::document::{Document, Palette};
 use crate::editor::history::DrawCommand;
 use crate::editor::{EditorState, ToolType};
 use crate::io::{FileAction, IoHandler};
@@ -90,6 +90,38 @@ pub enum PalettePolicy {
     UsePreset(String),
 }
 
+/// A project-creation palette decision frozen while the outgoing project still
+/// exists. This makes Keep Current meaningful and prevents either the shared
+/// selector or a delayed confirmation from changing what will be committed.
+#[derive(Clone, Debug, PartialEq)]
+struct ResolvedPalettePolicy {
+    requested: PalettePolicy,
+    palette: Palette,
+}
+
+impl ResolvedPalettePolicy {
+    fn display_name(&self) -> String {
+        match &self.requested {
+            PalettePolicy::KeepCurrent => "Current palette".to_owned(),
+            PalettePolicy::UseDefault => {
+                format!(
+                    "{} (default)",
+                    crate::document::palette_library::default_preset().name
+                )
+            }
+            PalettePolicy::UsePreset(id) => crate::document::palette_library::get_preset(id)
+                .filter(|preset| preset.to_palette().is_some())
+                .map(|preset| preset.name.to_owned())
+                .unwrap_or_else(|| {
+                    format!(
+                        "{} (default; preset unavailable)",
+                        crate::document::palette_library::default_preset().name
+                    )
+                }),
+        }
+    }
+}
+
 /// A user-requested replacement held until unsaved work has been explicitly
 /// discarded. Keeping decoded data here prevents an Open action from changing
 /// the active project before the confirmation is accepted.
@@ -97,12 +129,12 @@ enum DocumentReplacement {
     NewDocument {
         width: u32,
         height: u32,
-        palette_policy: PalettePolicy,
+        palette_choice: ResolvedPalettePolicy,
     },
     ImportedImage {
         document: Document,
         file_name: String,
-        palette_policy: PalettePolicy,
+        palette_choice: ResolvedPalettePolicy,
     },
     OpenedProject {
         editor: EditorState,
@@ -114,7 +146,7 @@ enum DocumentReplacement {
     ImportedAnimation {
         animation: crate::document::AnimationManager,
         file_name: String,
-        palette_policy: PalettePolicy,
+        palette_choice: ResolvedPalettePolicy,
     },
 }
 
@@ -589,10 +621,11 @@ impl PixelBuddyApp {
 
     /// Queues a new document, asking before it would replace unsaved work.
     pub fn request_new_document(&mut self, width: u32, height: u32, palette_policy: PalettePolicy) {
+        let palette_choice = self.resolve_palette_policy(palette_policy);
         self.request_document_replacement(DocumentReplacement::NewDocument {
             width,
             height,
-            palette_policy,
+            palette_choice,
         });
     }
 
@@ -604,10 +637,11 @@ impl PixelBuddyApp {
         file_name: String,
         palette_policy: PalettePolicy,
     ) {
+        let palette_choice = self.resolve_palette_policy(palette_policy);
         self.request_document_replacement(DocumentReplacement::ImportedImage {
             document,
             file_name,
-            palette_policy,
+            palette_choice,
         });
     }
 
@@ -622,10 +656,11 @@ impl PixelBuddyApp {
         file_name: String,
         palette_policy: PalettePolicy,
     ) {
+        let palette_choice = self.resolve_palette_policy(palette_policy);
         self.request_document_replacement(DocumentReplacement::ImportedAnimation {
             animation,
             file_name,
-            palette_policy,
+            palette_choice,
         });
     }
 
@@ -653,21 +688,20 @@ impl PixelBuddyApp {
         }
     }
 
-    fn apply_palette_policy(&mut self, policy: &PalettePolicy) {
-        match policy {
-            PalettePolicy::KeepCurrent => { /* do nothing */ }
-            PalettePolicy::UseDefault => {
-                self.editor.animation.current_doc_mut().palette =
-                    crate::document::palette_library::default_preset().to_palette();
-            }
+    fn resolve_palette_policy(&self, requested: PalettePolicy) -> ResolvedPalettePolicy {
+        let palette = match &requested {
+            PalettePolicy::KeepCurrent => self.editor.document().palette.clone(),
+            PalettePolicy::UseDefault => crate::document::palette_library::default_palette(),
             PalettePolicy::UsePreset(id) => {
-                if let Some(preset) = crate::document::palette_library::get_preset(id) {
-                    self.editor.animation.current_doc_mut().palette = preset.to_palette();
-                } else {
-                    self.editor.animation.current_doc_mut().palette =
-                        crate::document::palette_library::default_preset().to_palette();
-                }
+                crate::document::palette_library::preset_palette_or_default(id)
             }
+        };
+        ResolvedPalettePolicy { requested, palette }
+    }
+
+    fn apply_palette_choice(&mut self, choice: &ResolvedPalettePolicy) {
+        for frame in &mut self.editor.animation.frames {
+            frame.document.palette = choice.palette.clone();
         }
     }
 
@@ -690,19 +724,19 @@ impl PixelBuddyApp {
             DocumentReplacement::NewDocument {
                 width,
                 height,
-                palette_policy,
+                palette_choice,
             } => {
                 self.editor = EditorState::new(width, height);
-                self.apply_palette_policy(&palette_policy);
+                self.apply_palette_choice(&palette_choice);
                 ("Created a new project".to_owned(), false, false)
             }
             DocumentReplacement::ImportedImage {
                 document,
                 file_name,
-                palette_policy,
+                palette_choice,
             } => {
                 self.editor = EditorState::from_imported_document(document);
-                self.apply_palette_policy(&palette_policy);
+                self.apply_palette_choice(&palette_choice);
                 (
                     format!("Imported {file_name}; save as a PixelBuddy project to preserve edits"),
                     true,
@@ -731,10 +765,10 @@ impl PixelBuddyApp {
             DocumentReplacement::ImportedAnimation {
                 animation,
                 file_name,
-                palette_policy,
+                palette_choice,
             } => {
                 self.editor = EditorState::from_imported_animation(animation);
-                self.apply_palette_policy(&palette_policy);
+                self.apply_palette_choice(&palette_choice);
                 (format!("Imported sprite sheet {file_name}"), true, true)
             }
         };
