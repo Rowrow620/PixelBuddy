@@ -39,6 +39,17 @@ pub enum GradientBlendMode {
     AlphaBlend,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum GradientCoverage {
+    /// Recolor only pixels that already contain layer content and retain their
+    /// original alpha. This is the safe default for sprites with transparent
+    /// surroundings.
+    PaintedPixels,
+    /// Generate gradient pixels everywhere in the selected target region,
+    /// including pixels that were previously transparent.
+    EntireTarget,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct GradientStop {
     pub position: f32, // 0.0 to 1.0
@@ -55,6 +66,7 @@ pub struct GradientState {
     pub edge_mode: GradientEdgeMode,
     pub dithering: GradientDithering,
     pub blend_mode: GradientBlendMode,
+    pub coverage: GradientCoverage,
     // Linear specific
     pub linear_start: [f32; 2],
     pub linear_end: [f32; 2],
@@ -85,6 +97,7 @@ impl Default for GradientState {
             edge_mode: GradientEdgeMode::Clamp,
             dithering: GradientDithering::None,
             blend_mode: GradientBlendMode::Replace,
+            coverage: GradientCoverage::PaintedPixels,
             linear_start: [0.0, 0.5],
             linear_end: [1.0, 0.5],
             radial_center: [0.5, 0.5],
@@ -95,6 +108,56 @@ impl Default for GradientState {
 }
 
 impl GradientState {
+    pub fn compose_fill_pixel(&self, original: [u8; 4], sampled: [u8; 4]) -> Option<[u8; 4]> {
+        let preserve_alpha = self.coverage == GradientCoverage::PaintedPixels;
+        if preserve_alpha && original[3] == 0 {
+            return None;
+        }
+
+        let output = match self.blend_mode {
+            GradientBlendMode::Replace if preserve_alpha => {
+                [sampled[0], sampled[1], sampled[2], original[3]]
+            }
+            GradientBlendMode::Replace => sampled,
+            GradientBlendMode::AlphaBlend if preserve_alpha => {
+                let sampled_alpha = sampled[3] as f32 / 255.0;
+                let mix_channel = |sampled_channel: u8, original_channel: u8| {
+                    (sampled_channel as f32 * sampled_alpha
+                        + original_channel as f32 * (1.0 - sampled_alpha))
+                        .clamp(0.0, 255.0) as u8
+                };
+                [
+                    mix_channel(sampled[0], original[0]),
+                    mix_channel(sampled[1], original[1]),
+                    mix_channel(sampled[2], original[2]),
+                    original[3],
+                ]
+            }
+            GradientBlendMode::AlphaBlend => {
+                let sampled_alpha = sampled[3] as f32 / 255.0;
+                let original_alpha = original[3] as f32 / 255.0;
+                let output_alpha = sampled_alpha + original_alpha * (1.0 - sampled_alpha);
+                if output_alpha <= 0.0 {
+                    [0, 0, 0, 0]
+                } else {
+                    let blend_channel = |sampled_channel: u8, original_channel: u8| {
+                        ((sampled_channel as f32 * sampled_alpha)
+                            + (original_channel as f32 * original_alpha * (1.0 - sampled_alpha)))
+                            / output_alpha
+                    };
+                    [
+                        blend_channel(sampled[0], original[0]).clamp(0.0, 255.0) as u8,
+                        blend_channel(sampled[1], original[1]).clamp(0.0, 255.0) as u8,
+                        blend_channel(sampled[2], original[2]).clamp(0.0, 255.0) as u8,
+                        (output_alpha * 255.0).clamp(0.0, 255.0) as u8,
+                    ]
+                }
+            }
+        };
+
+        Some(output)
+    }
+
     pub fn prepare_for_preview(&mut self) -> bool {
         let geometry_is_finite = self
             .linear_start
@@ -264,7 +327,67 @@ impl GradientState {
 
 #[cfg(test)]
 mod tests {
-    use super::{GradientState, GradientStop, MAX_GRADIENT_STOPS};
+    use super::{
+        GradientBlendMode, GradientCoverage, GradientState, GradientStop, MAX_GRADIENT_STOPS,
+    };
+
+    #[test]
+    fn painted_pixel_coverage_skips_clear_pixels_and_preserves_source_alpha() {
+        let gradient = GradientState::default();
+
+        assert_eq!(
+            gradient.compose_fill_pixel([10, 20, 30, 0], [200, 150, 100, 255]),
+            None
+        );
+        assert_eq!(
+            gradient.compose_fill_pixel([10, 20, 30, 96], [200, 150, 100, 255]),
+            Some([200, 150, 100, 96])
+        );
+    }
+
+    #[test]
+    fn entire_target_coverage_can_generate_previously_clear_pixels() {
+        let gradient = GradientState {
+            coverage: GradientCoverage::EntireTarget,
+            ..GradientState::default()
+        };
+
+        assert_eq!(
+            gradient.compose_fill_pixel([10, 20, 30, 0], [200, 150, 100, 192]),
+            Some([200, 150, 100, 192])
+        );
+    }
+
+    #[test]
+    fn painted_pixel_alpha_blend_changes_rgb_without_expanding_alpha() {
+        let gradient = GradientState {
+            blend_mode: GradientBlendMode::AlphaBlend,
+            ..GradientState::default()
+        };
+
+        assert_eq!(
+            gradient.compose_fill_pixel([200, 0, 0, 96], [0, 0, 200, 128]),
+            Some([99, 0, 100, 96])
+        );
+    }
+
+    #[test]
+    fn entire_target_alpha_blend_uses_source_over_compositing() {
+        let gradient = GradientState {
+            blend_mode: GradientBlendMode::AlphaBlend,
+            coverage: GradientCoverage::EntireTarget,
+            ..GradientState::default()
+        };
+
+        assert_eq!(
+            gradient.compose_fill_pixel([255, 0, 0, 128], [0, 255, 0, 128]),
+            Some([84, 170, 0, 191])
+        );
+        assert_eq!(
+            gradient.compose_fill_pixel([9, 8, 7, 0], [1, 2, 3, 128]),
+            Some([1, 2, 3, 128])
+        );
+    }
 
     #[test]
     fn preview_preparation_sorts_once_and_preserves_endpoints() {

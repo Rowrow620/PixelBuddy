@@ -143,6 +143,8 @@ impl ActiveEffectState {
         } else {
             EffectTarget::ActiveLayer
         };
+        let gradient_coverage =
+            Self::default_gradient_coverage(effect_type, target, editor.document());
         let original_document = Box::new(editor.document().clone());
         let preview_document = original_document.clone();
         Self {
@@ -174,7 +176,10 @@ impl ActiveEffectState {
             drop_shadow_opacity: 0.5,
             pixelize_size: 4,
             gradient: {
-                let mut g = crate::effects::gradient::GradientState::default();
+                let mut g = crate::effects::gradient::GradientState {
+                    coverage: gradient_coverage,
+                    ..crate::effects::gradient::GradientState::default()
+                };
                 g.stops.clear();
                 g.stops.push(crate::effects::gradient::GradientStop {
                     position: 0.0,
@@ -189,6 +194,34 @@ impl ActiveEffectState {
             preview_dirty: false,
             last_preview_refresh_at: 0.0,
         }
+    }
+
+    fn default_gradient_coverage(
+        effect_type: EffectType,
+        target: EffectTarget,
+        document: &Document,
+    ) -> crate::effects::gradient::GradientCoverage {
+        if effect_type != EffectType::GradientFill {
+            return crate::effects::gradient::GradientCoverage::PaintedPixels;
+        }
+
+        let target_generates_pixels = target == EffectTarget::Selection
+            || !document
+                .active_layer()
+                .canvas
+                .pixels()
+                .chunks_exact(4)
+                .any(|pixel| pixel[3] != 0);
+        if target_generates_pixels {
+            crate::effects::gradient::GradientCoverage::EntireTarget
+        } else {
+            crate::effects::gradient::GradientCoverage::PaintedPixels
+        }
+    }
+
+    fn reset_gradient_coverage_for_target(&mut self) {
+        self.gradient.coverage =
+            Self::default_gradient_coverage(self.effect_type, self.target, &self.original_document);
     }
 
     fn provenance_matches(&self, app: &crate::app::PixelBuddyApp) -> bool {
@@ -667,8 +700,6 @@ impl ActiveEffectState {
                 let dy = ey - sy;
                 let len_sq = dx * dx + dy * dy;
 
-                let blend = self.gradient.blend_mode;
-
                 for y in 0..height {
                     for x in 0..width {
                         if !region.contains(x, y) {
@@ -732,28 +763,12 @@ impl ActiveEffectState {
                         let sampled = self.gradient.sample_color(t);
 
                         let out_color = if is_fill {
-                            match blend {
-                                crate::effects::gradient::GradientBlendMode::Replace => sampled,
-                                crate::effects::gradient::GradientBlendMode::AlphaBlend => {
-                                    let sa = sampled[3] as f32 / 255.0;
-                                    let oa = original_pixel[3] as f32 / 255.0;
-                                    let a_out = sa + oa * (1.0 - sa);
-                                    if a_out > 0.0 {
-                                        let r = ((sampled[0] as f32 * sa)
-                                            + (original_pixel[0] as f32 * oa * (1.0 - sa)))
-                                            / a_out;
-                                        let g = ((sampled[1] as f32 * sa)
-                                            + (original_pixel[1] as f32 * oa * (1.0 - sa)))
-                                            / a_out;
-                                        let b = ((sampled[2] as f32 * sa)
-                                            + (original_pixel[2] as f32 * oa * (1.0 - sa)))
-                                            / a_out;
-                                        [r as u8, g as u8, b as u8, (a_out * 255.0) as u8]
-                                    } else {
-                                        [0, 0, 0, 0]
-                                    }
-                                }
-                            }
+                            let Some(output) =
+                                self.gradient.compose_fill_pixel(original_pixel, sampled)
+                            else {
+                                continue;
+                            };
+                            output
                         } else {
                             [sampled[0], sampled[1], sampled[2], original_pixel[3]]
                         };
@@ -1368,6 +1383,36 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                     if is_fill {
                         ui.separator();
                         ui.horizontal(|ui| {
+                            ui.label("Coverage:");
+                            if ui
+                                .radio_value(
+                                    &mut effect.gradient.coverage,
+                                    crate::effects::gradient::GradientCoverage::PaintedPixels,
+                                    "Painted Pixels",
+                                )
+                                .on_hover_text(
+                                    "Recolor existing layer pixels while keeping their transparency",
+                                )
+                                .changed()
+                            {
+                                effect_changed = true;
+                            }
+                            if ui
+                                .radio_value(
+                                    &mut effect.gradient.coverage,
+                                    crate::effects::gradient::GradientCoverage::EntireTarget,
+                                    "Entire Target",
+                                )
+                                .on_hover_text(
+                                    "Fill every pixel in the active layer canvas or current selection",
+                                )
+                                .changed()
+                            {
+                                effect_changed = true;
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
                             ui.label("Shape:");
                             if ui
                                 .radio_value(
@@ -1542,6 +1587,7 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                     )
                     .changed()
                 {
+                    effect.reset_gradient_coverage_for_target();
                     effect_changed = true;
                 }
                 let selection_available = EffectRegion::for_target(
@@ -1560,6 +1606,7 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                         )
                         .changed()
                     {
+                        effect.reset_gradient_coverage_for_target();
                         effect_changed = true;
                     }
                 });
@@ -1925,7 +1972,7 @@ mod tests {
     }
 
     #[test]
-    fn gradient_fill_replace_and_alpha_blend() {
+    fn gradient_fill_alpha_blend_with_an_opaque_stop_preserves_painted_alpha() {
         let mut app = crate::app::PixelBuddyApp::new(1, 1);
         app.editor
             .document_mut()
@@ -1957,11 +2004,187 @@ mod tests {
         commit_test_effect(&mut app);
 
         let canvas = &app.editor.document().active_layer().canvas;
-        let p = canvas.get_pixel(0, 0);
+        assert_eq!(canvas.get_pixel(0, 0), [0, 255, 0, 128]);
+    }
+
+    #[test]
+    fn gradient_fill_defaults_to_existing_pixels_and_keeps_sprite_transparency() {
+        let mut app = crate::app::PixelBuddyApp::new(3, 1);
+        let source_pixels = [[11, 22, 33, 0], [255, 0, 0, 255], [255, 0, 0, 96]];
+        for (x, pixel) in source_pixels.into_iter().enumerate() {
+            app.editor
+                .document_mut()
+                .active_layer_mut()
+                .canvas
+                .set_pixel(x as u32, 0, pixel);
+        }
+
+        app.start_effect(crate::effects::EffectType::GradientFill);
+        if let Some(effect) = &mut app.active_effect {
+            effect.gradient.stops = vec![
+                crate::effects::gradient::GradientStop {
+                    position: 0.0,
+                    color: [0, 255, 0, 255],
+                },
+                crate::effects::gradient::GradientStop {
+                    position: 1.0,
+                    color: [0, 255, 0, 255],
+                },
+            ];
+            effect.preview_dirty = true;
+        }
+        commit_test_effect(&mut app);
+
+        let canvas = &app.editor.document().active_layer().canvas;
+        assert_eq!(canvas.get_pixel(0, 0), source_pixels[0]);
+        assert_eq!(canvas.get_pixel(1, 0), [0, 255, 0, 255]);
+        assert_eq!(canvas.get_pixel(2, 0), [0, 255, 0, 96]);
+    }
+
+    #[test]
+    fn gradient_fill_entire_target_remains_an_explicit_full_canvas_option() {
+        let editor = crate::editor::EditorState::new(2, 1);
+        let mut effect = ActiveEffectState::new(EffectType::GradientFill, &editor, 0, 0);
         assert_eq!(
-            p[1], 255,
-            "Green gradient was alpha blended onto the canvas"
+            effect.gradient.coverage,
+            crate::effects::gradient::GradientCoverage::EntireTarget,
+            "a blank layer should be immediately fillable"
         );
+        effect.gradient.stops = vec![
+            crate::effects::gradient::GradientStop {
+                position: 0.0,
+                color: [0, 255, 0, 255],
+            },
+            crate::effects::gradient::GradientStop {
+                position: 1.0,
+                color: [0, 255, 0, 255],
+            },
+        ];
+        effect.refresh_preview(&editor.selection);
+
+        let canvas = &effect
+            .preview_document
+            .as_ref()
+            .expect("preview exists")
+            .active_layer()
+            .canvas;
+        assert_eq!(canvas.get_pixel(0, 0), [0, 255, 0, 255]);
+        assert_eq!(canvas.get_pixel(1, 0), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn gradient_fill_selection_defaults_to_filling_the_selected_area() {
+        let mut editor = crate::editor::EditorState::new(3, 1);
+        editor.selection.set_rect(1, 0, 1, 0);
+        let mut effect = ActiveEffectState::new(EffectType::GradientFill, &editor, 0, 0);
+        assert_eq!(effect.target, EffectTarget::Selection);
+        assert_eq!(
+            effect.gradient.coverage,
+            crate::effects::gradient::GradientCoverage::EntireTarget
+        );
+        effect.gradient.stops = vec![
+            crate::effects::gradient::GradientStop {
+                position: 0.0,
+                color: [0, 255, 0, 255],
+            },
+            crate::effects::gradient::GradientStop {
+                position: 1.0,
+                color: [0, 255, 0, 255],
+            },
+        ];
+        effect.refresh_preview(&editor.selection);
+
+        let canvas = &effect
+            .preview_document
+            .as_ref()
+            .expect("preview exists")
+            .active_layer()
+            .canvas;
+        assert_eq!(canvas.get_pixel(0, 0), [0, 0, 0, 0]);
+        assert_eq!(canvas.get_pixel(1, 0), [0, 255, 0, 255]);
+        assert_eq!(canvas.get_pixel(2, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn gradient_fill_target_changes_restore_the_safe_coverage_default() {
+        let mut editor = crate::editor::EditorState::new(3, 1);
+        editor
+            .document_mut()
+            .active_layer_mut()
+            .canvas
+            .set_pixel(0, 0, [255, 0, 0, 255]);
+        editor.selection.set_rect(1, 0, 1, 0);
+        let mut effect = ActiveEffectState::new(EffectType::GradientFill, &editor, 0, 0);
+        assert_eq!(
+            effect.gradient.coverage,
+            crate::effects::gradient::GradientCoverage::EntireTarget
+        );
+
+        effect.target = EffectTarget::ActiveLayer;
+        effect.reset_gradient_coverage_for_target();
+        assert_eq!(
+            effect.gradient.coverage,
+            crate::effects::gradient::GradientCoverage::PaintedPixels
+        );
+
+        effect.target = EffectTarget::Selection;
+        effect.reset_gradient_coverage_for_target();
+        assert_eq!(
+            effect.gradient.coverage,
+            crate::effects::gradient::GradientCoverage::EntireTarget
+        );
+    }
+
+    #[test]
+    fn gradient_map_preserves_clear_pixel_bytes_and_every_source_alpha() {
+        let mut editor = crate::editor::EditorState::new(3, 1);
+        let source_pixels = [[11, 22, 33, 0], [0, 0, 0, 96], [255, 255, 255, 255]];
+        for (x, pixel) in source_pixels.into_iter().enumerate() {
+            editor
+                .document_mut()
+                .active_layer_mut()
+                .canvas
+                .set_pixel(x as u32, 0, pixel);
+        }
+
+        let mut effect = ActiveEffectState::new(EffectType::GradientMap, &editor, 0, 0);
+        effect.gradient.stops = vec![
+            crate::effects::gradient::GradientStop {
+                position: 0.0,
+                color: [255, 0, 0, 255],
+            },
+            crate::effects::gradient::GradientStop {
+                position: 1.0,
+                color: [0, 0, 255, 255],
+            },
+        ];
+        effect.refresh_preview(&editor.selection);
+
+        let canvas = &effect
+            .preview_document
+            .as_ref()
+            .expect("preview exists")
+            .active_layer()
+            .canvas;
+        assert_eq!(canvas.get_pixel(0, 0), source_pixels[0]);
+        assert_eq!(canvas.get_pixel(1, 0), [255, 0, 0, 96]);
+        assert_eq!(canvas.get_pixel(2, 0), [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn gradient_effects_initialize_from_primary_and_secondary_colors() {
+        let mut editor = crate::editor::EditorState::new(1, 1);
+        editor.set_primary_color([10, 20, 30, 255]);
+        editor.set_secondary_color([200, 210, 220, 255]);
+
+        for effect_type in [EffectType::GradientFill, EffectType::GradientMap] {
+            let effect = ActiveEffectState::new(effect_type, &editor, 0, 0);
+            assert_eq!(effect.gradient.stops.len(), 2);
+            assert_eq!(effect.gradient.stops[0].position, 0.0);
+            assert_eq!(effect.gradient.stops[0].color, editor.primary_color);
+            assert_eq!(effect.gradient.stops[1].position, 1.0);
+            assert_eq!(effect.gradient.stops[1].color, editor.secondary_color);
+        }
     }
 
     #[test]
