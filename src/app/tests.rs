@@ -873,6 +873,8 @@ fn opened_image_action_cannot_mutate_a_later_selected_frame() {
     assert_eq!(app.editor.document().layers.len(), 1);
 
     let current_generation = app.active_frame_generation();
+    app.start_effect(crate::effects::EffectType::InvertColors);
+    assert!(app.active_effect.is_some());
     app.handle_opened_image(
         png,
         "fresh.png".to_owned(),
@@ -881,6 +883,7 @@ fn opened_image_action_cannot_mutate_a_later_selected_frame() {
         current_generation,
     );
 
+    assert!(app.active_effect.is_none());
     assert_eq!(app.editor.animation.current_frame_index, 1);
     assert_eq!(app.editor.document().layers.len(), 2);
     assert_eq!(
@@ -2078,6 +2081,38 @@ fn project_replacement_clears_a_frame_bound_effect_transaction() {
         (app.editor.document().width, app.editor.document().height),
         (4, 3)
     );
+}
+
+#[test]
+fn active_effect_blocks_playback_commands_and_document_shortcuts() {
+    let ctx = egui::Context::default();
+    let mut app = two_frame_app(0);
+    app.apply_tool_changes(vec![(0, 0, [9, 8, 7, 255])]);
+    app.editor.selection.set_rect(0, 0, 0, 0);
+    app.start_effect(crate::effects::EffectType::InvertColors);
+    assert!(app.active_effect.is_some());
+
+    app.toggle_animation_playback(0.0);
+    assert!(!app.editor.animation.is_playing);
+
+    // Even malformed or future internal callers cannot advance playback
+    // beneath an active effect transaction.
+    app.editor.animation.toggle_play(0.0);
+    let frame_before = app.editor.animation.current_frame_index;
+    assert!(!app.update_animation_playback(0.2));
+    assert_eq!(app.editor.animation.current_frame_index, frame_before);
+    app.editor.animation.stop();
+
+    ctx.begin_pass(key_input(egui::Key::Delete));
+    app.handle_shortcuts(&ctx, 0.2);
+    let _ = ctx.end_pass();
+
+    assert!(app.editor.selection.active);
+    assert_eq!(
+        app.editor.document().active_layer().canvas.get_pixel(0, 0),
+        [9, 8, 7, 255]
+    );
+    assert!(app.active_effect.is_some());
 }
 
 #[test]

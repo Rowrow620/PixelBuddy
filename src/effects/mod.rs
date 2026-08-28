@@ -950,6 +950,87 @@ fn effect_preview_refresh_due(last_refresh_at: f64, now: f64, pointer_active: bo
         || now - last_refresh_at >= EFFECT_PREVIEW_INTERVAL_SECONDS
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EffectCommitOutcome {
+    NoActiveEffect,
+    Rejected,
+    Unchanged,
+    Applied,
+}
+
+fn commit_active_effect(app: &mut crate::app::PixelBuddyApp) -> EffectCommitOutcome {
+    let transaction_is_current = app.active_effect.as_ref().is_some_and(|effect| {
+        effect.provenance_matches(app) && effect.target_layer_is_editable(app)
+    });
+    if app.active_effect.is_none() {
+        return EffectCommitOutcome::NoActiveEffect;
+    }
+    if !transaction_is_current {
+        app.active_effect = None;
+        app.texture_dirty = true;
+        app.status_message = Some((
+            "The project changed while the effect was open. The effect was cancelled.".to_owned(),
+            true,
+        ));
+        return EffectCommitOutcome::Rejected;
+    }
+
+    let selection = app.editor.selection;
+    if let Some(effect) = &mut app.active_effect {
+        if effect.refresh_if_dirty(&selection) {
+            app.texture_dirty = true;
+        }
+    }
+
+    let Some(effect) = app.active_effect.take() else {
+        return EffectCommitOutcome::NoActiveEffect;
+    };
+    let Some(preview) = effect.preview_document else {
+        debug_assert!(false, "an active effect must retain its preview document");
+        app.texture_dirty = true;
+        app.status_message = Some((
+            "The effect preview became unavailable. The effect was cancelled.".to_owned(),
+            true,
+        ));
+        return EffectCommitOutcome::Rejected;
+    };
+
+    let title = match effect.effect_type {
+        EffectType::AdjustColor => "Adjust Color",
+        EffectType::Offset => "Offset",
+        EffectType::Mirror => "Mirror",
+        EffectType::Rotate => "Rotate",
+        EffectType::InvertColors => "Invert Colors",
+        EffectType::Desaturation => "Desaturation",
+        EffectType::Posterize => "Posterize",
+        EffectType::Palettize => "Palettize",
+        EffectType::Outline => "Outline",
+        EffectType::DropShadow => "Drop Shadow",
+        EffectType::Pixelize => "Pixelize",
+        EffectType::GradientFill => "Gradient Fill",
+        EffectType::GradientMap => "Gradient Map",
+    };
+
+    let changed = app.editor.mutate_document(title, move |document| {
+        if *document == *preview {
+            return false;
+        }
+        document.clone_from(&preview);
+        true
+    });
+    if changed {
+        app.texture_dirty = true;
+        use crate::app::EditEffects;
+        app.consume_edit_effects(EditEffects::current_frame_artwork(true));
+        EffectCommitOutcome::Applied
+    } else {
+        // The visible preview is byte-identical to the source, so there is no
+        // cache work to perform after closing it.
+        app.texture_dirty = false;
+        EffectCommitOutcome::Unchanged
+    }
+}
+
 pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyApp) {
     let preview_texture = app.canvas_texture.clone();
     let preview_document_size = egui::vec2(
@@ -1682,9 +1763,6 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
         if modal.should_close() {
             effect_to_cancel = true;
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            effect_to_cancel = true;
-        }
     }
 
     if effect_changed {
@@ -1714,78 +1792,20 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
     }
 
     if effect_to_apply {
-        let transaction_is_current = app.active_effect.as_ref().is_some_and(|effect| {
-            effect.provenance_matches(app) && effect.target_layer_is_editable(app)
-        });
-        if !transaction_is_current {
-            app.active_effect = None;
-            app.texture_dirty = true;
-            app.status_message = Some((
-                "The project changed while the effect was open. The effect was cancelled."
-                    .to_owned(),
-                true,
-            ));
-            return;
-        }
-
-        let selection = app.editor.selection;
-        if let Some(effect) = &mut app.active_effect {
-            if effect.refresh_if_dirty(&selection) {
-                app.texture_dirty = true;
-            }
-        }
-
-        if let Some(effect) = app.active_effect.take() {
-            let title = match effect.effect_type {
-                EffectType::AdjustColor => "Adjust Color",
-                EffectType::Offset => "Offset",
-                EffectType::Mirror => "Mirror",
-                EffectType::Rotate => "Rotate",
-                EffectType::InvertColors => "Invert Colors",
-                EffectType::Desaturation => "Desaturation",
-                EffectType::Posterize => "Posterize",
-                EffectType::Palettize => "Palettize",
-                EffectType::Outline => "Outline",
-                EffectType::DropShadow => "Drop Shadow",
-                EffectType::Pixelize => "Pixelize",
-                EffectType::GradientFill => "Gradient Fill",
-                EffectType::GradientMap => "Gradient Map",
-            };
-
-            if let Some(preview) = effect.preview_document {
-                let changed = app.editor.mutate_document(title, move |document| {
-                    if *document == *preview {
-                        return false;
-                    }
-                    document.clone_from(&preview);
-                    true
-                });
-                if changed {
-                    app.texture_dirty = true;
-                    use crate::app::EditEffects;
-                    app.consume_edit_effects(EditEffects::current_frame_artwork(true));
-                } else {
-                    // The visible preview is byte-identical to the source, so
-                    // there is no cache work to perform after closing it.
-                    app.texture_dirty = false;
-                }
-            } else {
-                debug_assert!(false, "an active effect must retain its preview document");
-                return;
-            }
-        }
+        let _ = commit_active_effect(app);
     }
 
-    if effect_to_cancel && app.active_effect.take().is_some() {
-        app.texture_dirty = true;
+    if effect_to_cancel {
+        app.cancel_active_effect();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        effect_preview_refresh_due, effect_preview_size, offset_canvas_wrapped,
-        rotated_source_coordinate, ActiveEffectState, EffectTarget, EffectType,
+        commit_active_effect, effect_preview_refresh_due, effect_preview_size,
+        offset_canvas_wrapped, rotated_source_coordinate, ActiveEffectState, EffectCommitOutcome,
+        EffectTarget, EffectType,
     };
 
     #[test]
@@ -1900,7 +1920,7 @@ mod tests {
     }
 
     #[test]
-    fn dirty_preview_is_refreshed_exactly_once_before_commit() {
+    fn dirty_preview_refresh_is_consumed_exactly_once() {
         let mut editor = crate::editor::EditorState::new(1, 1);
         editor
             .document_mut()
@@ -1935,22 +1955,34 @@ mod tests {
         assert!(effect_preview_refresh_due(2.0, 1.0, true));
     }
 
+    #[test]
+    fn escape_closes_a_nested_picker_without_closing_the_effect_modal() {
+        let ctx = egui::Context::default();
+        let popup_id = egui::Id::new("effect_nested_picker_test");
+        ctx.memory_mut(|memory| memory.open_popup(popup_id));
+        let mut input = egui::RawInput::default();
+        input.events.push(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        ctx.begin_pass(input);
+
+        let modal = egui::Modal::new(egui::Id::new("effect_modal_escape_test")).show(&ctx, |ui| {
+            ui.memory_mut(|memory| memory.close_popup());
+        });
+        assert!(modal.any_popup_open);
+        assert!(!modal.should_close());
+        let _ = ctx.end_pass();
+    }
+
     fn commit_test_effect(app: &mut crate::app::PixelBuddyApp) {
-        let selection = app.editor.selection;
-        if let Some(effect) = &mut app.active_effect {
-            effect.refresh_if_dirty(&selection);
-        }
-        if let Some(effect) = app.active_effect.take() {
-            if let Some(preview) = effect.preview_document {
-                app.editor.mutate_document("Test", move |doc| {
-                    if *doc == *preview {
-                        return false;
-                    }
-                    doc.clone_from(&preview);
-                    true
-                });
-            }
-        }
+        assert!(matches!(
+            commit_active_effect(app),
+            EffectCommitOutcome::Applied | EffectCommitOutcome::Unchanged
+        ));
     }
 
     #[test]
@@ -2332,6 +2364,8 @@ mod tests {
             .canvas
             .pixels()
             .to_vec();
+        app.editor.mark_saved();
+        let revision = app.editor.revision();
 
         app.start_effect(crate::effects::EffectType::GradientFill);
         if let Some(effect) = &mut app.active_effect {
@@ -2339,8 +2373,8 @@ mod tests {
             let selection = app.editor.selection;
             effect.refresh_if_dirty(&selection);
         }
-        // simulate cancel
-        app.active_effect = None;
+        app.texture_dirty = false;
+        assert!(app.cancel_active_effect());
 
         let restored = app
             .editor
@@ -2353,6 +2387,11 @@ mod tests {
             original, restored,
             "Cancellation must result in a byte-for-byte identical document"
         );
+        assert!(app.active_effect.is_none());
+        assert_eq!(app.editor.revision(), revision);
+        assert!(!app.editor.is_dirty());
+        assert!(!app.editor.history.can_undo());
+        assert!(app.texture_dirty);
     }
 
     #[test]
@@ -2398,6 +2437,153 @@ mod tests {
     }
 
     #[test]
+    fn stale_effect_apply_cancels_without_overwriting_a_newer_edit() {
+        let mut app = crate::app::PixelBuddyApp::new(1, 1);
+        app.editor
+            .document_mut()
+            .active_layer_mut()
+            .canvas
+            .set_pixel(0, 0, [200, 10, 20, 255]);
+        app.editor.mark_saved();
+        app.start_effect(EffectType::InvertColors);
+
+        assert!(app.editor.mutate_document("Newer edit", |document| {
+            document
+                .active_layer_mut()
+                .canvas
+                .set_pixel(0, 0, [7, 8, 9, 255]);
+            true
+        }));
+        let document_before_apply = app.editor.document().clone();
+        let revision_before_apply = app.editor.revision();
+        let undo_count_before_apply = app.editor.history.undo_descriptions().len();
+
+        assert_eq!(
+            commit_active_effect(&mut app),
+            EffectCommitOutcome::Rejected
+        );
+        assert!(app.active_effect.is_none());
+        assert_eq!(app.editor.document(), &document_before_apply);
+        assert_eq!(app.editor.revision(), revision_before_apply);
+        assert_eq!(
+            app.editor.history.undo_descriptions().len(),
+            undo_count_before_apply
+        );
+        assert!(app.texture_dirty);
+        assert!(app
+            .status_message
+            .as_ref()
+            .is_some_and(|(message, is_error)| *is_error && message.contains("cancelled")));
+    }
+
+    #[test]
+    fn stale_effect_apply_rejects_frame_and_layer_aba_changes() {
+        let mut frame_app = crate::app::PixelBuddyApp::new(1, 1);
+        assert!(frame_app.add_frame());
+        assert!(frame_app.select_frame(0));
+        frame_app.editor.mark_saved();
+        frame_app.start_effect(EffectType::InvertColors);
+        assert!(frame_app.select_frame(1));
+        assert!(frame_app.select_frame(0));
+        let frame_document = frame_app.editor.document().clone();
+        let frame_revision = frame_app.editor.revision();
+
+        assert_eq!(
+            commit_active_effect(&mut frame_app),
+            EffectCommitOutcome::Rejected
+        );
+        assert_eq!(frame_app.editor.document(), &frame_document);
+        assert_eq!(frame_app.editor.revision(), frame_revision);
+
+        let mut layer_app = crate::app::PixelBuddyApp::new(1, 1);
+        layer_app.editor.document_mut().add_layer();
+        assert!(layer_app.select_layer_current_frame(0));
+        layer_app.editor.mark_saved();
+        layer_app.start_effect(EffectType::InvertColors);
+        assert!(layer_app.select_layer_current_frame(1));
+        assert!(layer_app.select_layer_current_frame(0));
+        let layer_document = layer_app.editor.document().clone();
+        let layer_revision = layer_app.editor.revision();
+
+        assert_eq!(
+            commit_active_effect(&mut layer_app),
+            EffectCommitOutcome::Rejected
+        );
+        assert_eq!(layer_app.editor.document(), &layer_document);
+        assert_eq!(layer_app.editor.revision(), layer_revision);
+    }
+
+    #[test]
+    fn stale_effect_apply_rejects_selection_and_project_session_changes() {
+        let mut selection_app = crate::app::PixelBuddyApp::new(2, 1);
+        selection_app.start_effect(EffectType::InvertColors);
+        selection_app.editor.selection.set_rect(0, 0, 0, 0);
+        let selection_document = selection_app.editor.document().clone();
+        let selection_revision = selection_app.editor.revision();
+
+        assert_eq!(
+            commit_active_effect(&mut selection_app),
+            EffectCommitOutcome::Rejected
+        );
+        assert_eq!(selection_app.editor.document(), &selection_document);
+        assert_eq!(selection_app.editor.revision(), selection_revision);
+
+        let mut project_app = crate::app::PixelBuddyApp::new(1, 1);
+        project_app.start_effect(EffectType::InvertColors);
+        let stale_effect = project_app.active_effect.take();
+        project_app.request_new_document(2, 1, crate::app::PalettePolicy::UseDefault);
+        assert_eq!(
+            (
+                project_app.editor.document().width,
+                project_app.editor.document().height
+            ),
+            (2, 1)
+        );
+        project_app.active_effect = stale_effect;
+        let project_document = project_app.editor.document().clone();
+        let project_revision = project_app.editor.revision();
+
+        assert_eq!(
+            commit_active_effect(&mut project_app),
+            EffectCommitOutcome::Rejected
+        );
+        assert_eq!(project_app.editor.document(), &project_document);
+        assert_eq!(project_app.editor.revision(), project_revision);
+    }
+
+    #[test]
+    fn effect_apply_revalidates_locked_and_missing_targets() {
+        let mut locked = crate::app::PixelBuddyApp::new(1, 1);
+        locked.start_effect(EffectType::InvertColors);
+        let revision = locked.editor.revision();
+        locked
+            .editor
+            .animation
+            .current_doc_mut()
+            .active_layer_mut()
+            .locked = true;
+
+        assert_eq!(
+            commit_active_effect(&mut locked),
+            EffectCommitOutcome::Rejected
+        );
+        assert_eq!(locked.editor.revision(), revision);
+        assert!(locked.editor.document().active_layer().locked);
+
+        let mut missing = crate::app::PixelBuddyApp::new(1, 1);
+        missing.start_effect(EffectType::InvertColors);
+        let revision = missing.editor.revision();
+        missing.editor.animation.current_doc_mut().layers.clear();
+
+        assert_eq!(
+            commit_active_effect(&mut missing),
+            EffectCommitOutcome::Rejected
+        );
+        assert_eq!(missing.editor.revision(), revision);
+        assert!(missing.editor.document().layers.is_empty());
+    }
+
+    #[test]
     fn locked_layers_reject_effects_before_preview_allocation() {
         let mut app = crate::app::PixelBuddyApp::new(1, 1);
         app.editor.document_mut().active_layer_mut().locked = true;
@@ -2412,8 +2598,90 @@ mod tests {
     }
 
     #[test]
+    fn locked_playback_frame_rejects_effect_without_pausing_or_dirtying() {
+        let mut app = crate::app::PixelBuddyApp::new(1, 1);
+        assert!(app.add_frame());
+        assert!(app.select_frame(0));
+        app.editor.animation.frames[1]
+            .document
+            .active_layer_mut()
+            .locked = true;
+        app.editor.mark_saved();
+        app.toggle_animation_playback(0.0);
+        app.editor.animation.current_frame_index = 1;
+        let revision = app.editor.revision();
+
+        app.start_effect(EffectType::InvertColors);
+
+        assert!(app.active_effect.is_none());
+        assert!(app.editor.animation.is_playing);
+        assert_eq!(app.editor.animation.current_frame_index, 1);
+        assert_eq!(app.editor.animation.selected_frame_index(), 0);
+        assert_eq!(app.editor.revision(), revision);
+        assert!(!app.editor.is_dirty());
+    }
+
+    #[test]
+    fn changed_effect_apply_commits_exact_preview_as_one_undoable_transaction() {
+        let ctx = egui::Context::default();
+        let texture = |name: &str| {
+            ctx.load_texture(
+                name,
+                egui::ColorImage::new([1, 1], egui::Color32::WHITE),
+                egui::TextureOptions::NEAREST,
+            )
+        };
+        let mut app = crate::app::PixelBuddyApp::new(1, 1);
+        assert!(app.add_frame());
+        assert!(app.select_frame(0));
+        app.editor
+            .document_mut()
+            .active_layer_mut()
+            .canvas
+            .set_pixel(0, 0, [10, 20, 30, 255]);
+        app.editor.mark_saved();
+        let source = app.editor.document().clone();
+        let revision = app.editor.revision();
+        app.frame_thumbnails = vec![
+            Some(texture("effect_current")),
+            Some(texture("effect_other")),
+        ];
+        app.start_effect(EffectType::InvertColors);
+        let preview = app
+            .active_effect
+            .as_ref()
+            .and_then(|effect| effect.preview_document.as_deref())
+            .expect("the effect should have a visible preview")
+            .clone();
+        app.texture_dirty = false;
+
+        assert_eq!(commit_active_effect(&mut app), EffectCommitOutcome::Applied);
+        assert!(app.active_effect.is_none());
+        assert_eq!(app.editor.document(), &preview);
+        assert_eq!(app.editor.revision(), revision.wrapping_add(1));
+        assert!(app.editor.is_dirty());
+        assert_eq!(app.editor.history.undo_descriptions().len(), 1);
+        assert!(app.texture_dirty);
+        assert!(app.frame_thumbnails[0].is_none());
+        assert!(app.frame_thumbnails[1].is_some());
+
+        assert!(app.undo_current_frame());
+        assert_eq!(app.editor.document(), &source);
+        assert!(app.redo_current_frame());
+        assert_eq!(app.editor.document(), &preview);
+    }
+
+    #[test]
     fn neutral_effect_commit_is_a_clean_history_free_noop() {
         let mut app = crate::app::PixelBuddyApp::new(1, 1);
+        let ctx = egui::Context::default();
+        let thumbnail = ctx.load_texture(
+            "neutral_effect_thumbnail",
+            egui::ColorImage::new([1, 1], egui::Color32::WHITE),
+            egui::TextureOptions::NEAREST,
+        );
+        app.frame_thumbnails = vec![Some(thumbnail)];
+        app.editor.mark_saved();
         let revision_before = app.editor.revision();
         let pixels_before = app
             .editor
@@ -2424,10 +2692,19 @@ mod tests {
             .to_vec();
 
         app.start_effect(EffectType::AdjustColor);
-        commit_test_effect(&mut app);
+        app.texture_dirty = false;
+        assert_eq!(
+            commit_active_effect(&mut app),
+            EffectCommitOutcome::Unchanged
+        );
 
+        assert!(app.active_effect.is_none());
         assert_eq!(app.editor.revision(), revision_before);
+        assert!(!app.editor.is_dirty());
         assert!(!app.editor.history.can_undo());
+        assert!(!app.editor.history.can_redo());
+        assert!(app.frame_thumbnails[0].is_some());
+        assert!(!app.texture_dirty);
         assert_eq!(
             app.editor.document().active_layer().canvas.pixels(),
             pixels_before
@@ -2544,6 +2821,11 @@ mod tests {
     fn unavailable_selection_defaults_to_active_layer_target() {
         let editor = crate::editor::EditorState::new(2, 2);
         let effect = ActiveEffectState::new(EffectType::InvertColors, &editor, 0, 0);
+        assert_eq!(effect.target, EffectTarget::ActiveLayer);
+
+        let mut clipped_empty = crate::editor::EditorState::new(2, 2);
+        clipped_empty.selection.set_rect(3, 3, 5, 5);
+        let effect = ActiveEffectState::new(EffectType::InvertColors, &clipped_empty, 0, 0);
         assert_eq!(effect.target, EffectTarget::ActiveLayer);
     }
 

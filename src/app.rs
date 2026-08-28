@@ -804,17 +804,8 @@ impl PixelBuddyApp {
             return;
         }
 
-        // Playback's visible frame can differ from its persisted selection.
-        // An effect is an edit, so first pause and adopt exactly what the user
-        // can see, then capture provenance from that stable frame.
-        if self.editor.animation.is_playing {
-            self.prepare_active_frame_transition();
-            let selection_changed = self.editor.pause_animation_for_editing();
-            if selection_changed {
-                self.finish_active_frame_transition(false);
-            }
-        }
-
+        // Validate the visible frame before adopting it for editing. A failed
+        // effect request must not pause playback or dirty the project.
         let Some(active_layer) = self
             .editor
             .document()
@@ -833,6 +824,17 @@ impl PixelBuddyApp {
             return;
         }
 
+        // Playback's visible frame can differ from its persisted selection.
+        // An effect is an edit, so first pause and adopt exactly what the user
+        // can see, then capture provenance from that stable frame.
+        if self.editor.animation.is_playing {
+            self.prepare_active_frame_transition();
+            let selection_changed = self.editor.pause_animation_for_editing();
+            if selection_changed {
+                self.finish_active_frame_transition(false);
+            }
+        }
+
         let mut effect = crate::effects::ActiveEffectState::new(
             effect_type,
             &self.editor,
@@ -844,6 +846,15 @@ impl PixelBuddyApp {
         self.active_effect = Some(effect);
         self.texture_dirty = true;
     }
+
+    pub(crate) fn cancel_active_effect(&mut self) -> bool {
+        if self.active_effect.take().is_none() {
+            return false;
+        }
+        self.texture_dirty = true;
+        true
+    }
+
     pub(crate) const fn document_session_id(&self) -> u64 {
         self.document_session_id
     }
@@ -995,6 +1006,9 @@ impl PixelBuddyApp {
     /// Stops preview/canvas activity before a current-project import mutates
     /// the frame collection or artwork.
     fn prepare_current_project_import(&mut self) {
+        // A file chooser can complete asynchronously after an effect was
+        // opened. Do not let that stale preview hide the successful import.
+        self.cancel_active_effect();
         self.cancel_canvas_action();
         self.last_canvas_pixel = None;
         self.editor.pause_animation_for_editing();
@@ -1798,6 +1812,9 @@ impl PixelBuddyApp {
     /// Advances preview playback through the same app-level synchronization
     /// effects as manual selection without marking every preview tick dirty.
     fn update_animation_playback(&mut self, current_time: f64) -> bool {
+        if self.active_effect.is_some() {
+            return false;
+        }
         let outgoing_index = self.editor.animation.current_frame_index;
         if !self.editor.update_animation_playback(current_time) {
             return false;
@@ -1809,6 +1826,9 @@ impl PixelBuddyApp {
     }
 
     pub(crate) fn toggle_animation_playback(&mut self, current_time: f64) {
+        if self.active_effect.is_some() {
+            return;
+        }
         if self.editor.animation.frames.len() > 1 {
             // Editing and preview playback must never own the canvas pointer
             // lifecycle at the same time.

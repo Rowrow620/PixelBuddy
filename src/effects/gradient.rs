@@ -479,6 +479,18 @@ mod tests {
             assert!(!invalid.prepare_for_preview());
         }
 
+        let mut maximum = GradientState {
+            stops: (0..MAX_GRADIENT_STOPS)
+                .map(|index| GradientStop {
+                    position: index as f32 / (MAX_GRADIENT_STOPS - 1) as f32,
+                    color: [index as u8, 0, 0, 255],
+                })
+                .collect(),
+            ..GradientState::default()
+        };
+        assert!(maximum.prepare_for_preview());
+        assert_eq!(maximum.stops.len(), MAX_GRADIENT_STOPS);
+
         let mut excessive = GradientState {
             stops: (0..=MAX_GRADIENT_STOPS)
                 .map(|index| GradientStop {
