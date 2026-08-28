@@ -135,9 +135,63 @@ fn frame_has_layer(app: &PixelBuddyApp, frame_index: usize, layer_index: usize) 
 }
 
 const TIMELINE_THUMBNAIL_SIZE: usize = 24;
+const TIMELINE_HEADER_HEIGHT: f32 = 38.0;
+const TIMELINE_ROW_HEIGHT: f32 = 32.0;
+const TIMELINE_PANEL_BASE_HEIGHT: f32 = 96.0;
+const TIMELINE_PANEL_MIN_HEIGHT: f32 = 112.0;
+const TIMELINE_PANEL_MAX_SCREEN_FRACTION: f32 = 0.65;
+const TIMELINE_PANEL_ABSOLUTE_MAX_HEIGHT: f32 = 560.0;
+const TIMELINE_DEFAULT_VISIBLE_LAYERS: usize = 4;
+const TIMELINE_WHEEL_SCALE: f32 = 0.25;
+const TIMELINE_WHEEL_MAX_STEP: f32 = TIMELINE_ROW_HEIGHT;
 /// At 24×24 RGBA pixels this keeps live GPU thumbnail texels near 1.2 MiB,
 /// excluding small renderer/handle overhead.
 const MAX_TIMELINE_THUMBNAILS: usize = 512;
+
+fn timeline_panel_max_height(screen_height: f32) -> f32 {
+    if !screen_height.is_finite() || screen_height <= 0.0 {
+        return TIMELINE_PANEL_MIN_HEIGHT;
+    }
+    (screen_height * TIMELINE_PANEL_MAX_SCREEN_FRACTION).clamp(
+        TIMELINE_PANEL_MIN_HEIGHT,
+        TIMELINE_PANEL_ABSOLUTE_MAX_HEIGHT,
+    )
+}
+
+fn timeline_panel_default_height(layer_count: usize, max_height: f32) -> f32 {
+    let visible_layers = layer_count.clamp(1, TIMELINE_DEFAULT_VISIBLE_LAYERS);
+    (TIMELINE_PANEL_BASE_HEIGHT + visible_layers as f32 * TIMELINE_ROW_HEIGHT).clamp(
+        TIMELINE_PANEL_MIN_HEIGHT,
+        max_height.max(TIMELINE_PANEL_MIN_HEIGHT),
+    )
+}
+
+fn scaled_timeline_wheel_delta(delta: f32) -> f32 {
+    if !delta.is_finite() {
+        return 0.0;
+    }
+    (delta * TIMELINE_WHEEL_SCALE).clamp(-TIMELINE_WHEEL_MAX_STEP, TIMELINE_WHEEL_MAX_STEP)
+}
+
+fn moderate_timeline_wheel_scroll(ui: &mut egui::Ui) {
+    if !ui.rect_contains_pointer(ui.available_rect_before_wrap()) {
+        return;
+    }
+
+    ui.ctx().input_mut(|input| {
+        input.smooth_scroll_delta.y = scaled_timeline_wheel_delta(input.smooth_scroll_delta.y);
+    });
+}
+
+fn use_compact_timeline_scrollbars(ui: &mut egui::Ui) {
+    let scroll = &mut ui.spacing_mut().scroll;
+    scroll.floating = true;
+    scroll.bar_width = 6.0;
+    scroll.floating_width = 3.0;
+    scroll.floating_allocated_width = 3.0;
+    scroll.handle_min_length = 12.0;
+    scroll.foreground_color = true;
+}
 
 #[derive(Clone)]
 struct TimelineLayerThumbnailCache {
@@ -406,6 +460,9 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
 
     let frame_count = app.editor.animation.frames.len();
     let current_frame = app.editor.animation.current_frame_index;
+    let layers_count = app.editor.document().layers.len();
+    let panel_max_height = timeline_panel_max_height(ctx.screen_rect().height());
+    let panel_default_height = timeline_panel_default_height(layers_count, panel_max_height);
     let frame_range_id = timeline_frame_range_id(app.document_session_id());
     let tag_editor_id = timeline_tag_editor_id(app.document_session_id());
     let mut tag_editor = ctx.data(|data| data.get_temp::<TagEditorDraft>(tag_editor_id));
@@ -418,8 +475,12 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
         .unwrap_or_else(|| FrameRangeSelection::single(current_frame));
 
     egui::TopBottomPanel::bottom("timeline_panel")
-        .max_height(350.0)
+        .default_height(panel_default_height)
+        .min_height(TIMELINE_PANEL_MIN_HEIGHT)
+        .max_height(panel_max_height)
+        .resizable(true)
         .show(ctx, |ui| {
+            use_compact_timeline_scrollbars(ui);
             // TOP CONTROLS BAR (Play, FPS, Onion, etc.)
             ui.horizontal_wrapped(|ui| {
                 ui.add_space(4.0);
@@ -498,21 +559,23 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
             ui.separator();
 
             // GRID LAYOUT
-            let header_height = 38.0;
-            let row_height = 32.0;
             let frame_count = app.editor.animation.frames.len();
             let current_frame = app.editor.animation.current_frame_index;
             let layers_count = app.editor.document().layers.len();
             let active_idx = app.editor.document().active_layer_index;
 
-            egui::ScrollArea::vertical().id_salt("timeline_vscroll").show(ui, |ui| {
+            moderate_timeline_wheel_scroll(ui);
+            egui::ScrollArea::vertical()
+                .id_salt("timeline_vscroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                     // LEFT COLUMN (Layers)
                     ui.vertical(|ui| {
                         ui.set_width(220.0);
                         // Header space
-                        ui.allocate_ui(egui::vec2(220.0, header_height), |ui| {
+                        ui.allocate_ui(egui::vec2(220.0, TIMELINE_HEADER_HEIGHT), |ui| {
                             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                                 ui.label(egui::RichText::new("FRAMES").strong());
                             });
@@ -520,7 +583,7 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
 
                         // Layer rows
                         for i in (0..layers_count).rev() {
-                            ui.allocate_ui(egui::vec2(220.0, row_height), |ui| {
+                            ui.allocate_ui(egui::vec2(220.0, TIMELINE_ROW_HEIGHT), |ui| {
                                 crate::ui::layers_panel::draw_layer_row_ui(
                                     ctx,
                                     app,
@@ -735,7 +798,9 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                             for i in (0..layers_count).rev() {
                                 ui.horizontal(|ui| {
                                     for f in 0..frame_count {
-                                        ui.allocate_ui(egui::vec2(32.0, row_height), |ui| {
+                                        ui.allocate_ui(
+                                            egui::vec2(32.0, TIMELINE_ROW_HEIGHT),
+                                            |ui| {
                                             if frame_has_layer(app, f, i) {
                                                 ui.centered_and_justified(|ui| {
                                                     let (rect, response) = ui.allocate_exact_size(
@@ -775,14 +840,15 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
                                                     }
                                                 });
                                             }
-                                        });
+                                            },
+                                        );
                                     }
                                 });
                             }
                         });
                     });
                 });
-            });
+                });
         });
 
     if let Some(draft) = tag_editor.as_mut() {
@@ -903,10 +969,12 @@ pub fn show(ctx: &egui::Context, app: &mut PixelBuddyApp) {
 mod tests {
     use super::{
         apply_frame_selection, apply_pending_timeline_actions, frame_has_layer, frame_index_at_x,
-        layer_thumbnail_image, timeline_layer_thumbnail, timeline_layer_thumbnail_cache_id,
-        FrameRangeSelection, FrameSelectionRequest, PendingFrameAction,
+        layer_thumbnail_image, scaled_timeline_wheel_delta, timeline_layer_thumbnail,
+        timeline_layer_thumbnail_cache_id, timeline_panel_default_height,
+        timeline_panel_max_height, FrameRangeSelection, FrameSelectionRequest, PendingFrameAction,
         PendingLayerStructureAction, PendingTagAction, TagEditorDraft, TimelineLayerThumbnailCache,
-        TimelinePendingActions, MAX_TIMELINE_THUMBNAILS,
+        TimelinePendingActions, MAX_TIMELINE_THUMBNAILS, TIMELINE_PANEL_ABSOLUTE_MAX_HEIGHT,
+        TIMELINE_PANEL_MIN_HEIGHT, TIMELINE_ROW_HEIGHT,
     };
     use crate::app::PixelBuddyApp;
     use crate::document::animation::{FrameTag, MAX_TAG_NAME_BYTES, MAX_TAG_NAME_CHARS};
@@ -919,6 +987,29 @@ mod tests {
         app.editor.document_mut().active_layer_index = 1;
         assert!(app.editor.select_frame(0));
         app
+    }
+
+    #[test]
+    fn timeline_panel_height_is_layer_aware_and_screen_bounded() {
+        let max_height = timeline_panel_max_height(600.0);
+        assert!(max_height > TIMELINE_PANEL_MIN_HEIGHT);
+        assert!(max_height <= TIMELINE_PANEL_ABSOLUTE_MAX_HEIGHT);
+
+        let one_layer = timeline_panel_default_height(1, max_height);
+        let two_layers = timeline_panel_default_height(2, max_height);
+        let many_layers = timeline_panel_default_height(100, max_height);
+        assert!(one_layer >= TIMELINE_PANEL_MIN_HEIGHT);
+        assert!(two_layers >= one_layer + TIMELINE_ROW_HEIGHT);
+        assert!(many_layers <= max_height);
+    }
+
+    #[test]
+    fn timeline_wheel_delta_is_gradual_and_bounded_to_one_row_per_frame() {
+        assert_eq!(scaled_timeline_wheel_delta(8.0), 2.0);
+        assert_eq!(scaled_timeline_wheel_delta(120.0), 30.0);
+        assert_eq!(scaled_timeline_wheel_delta(1_000.0), TIMELINE_ROW_HEIGHT);
+        assert_eq!(scaled_timeline_wheel_delta(-1_000.0), -TIMELINE_ROW_HEIGHT);
+        assert_eq!(scaled_timeline_wheel_delta(f32::NAN), 0.0);
     }
 
     #[test]
