@@ -337,8 +337,9 @@ pub struct PixelBuddyApp {
     /// the active filename or saved-state bookkeeping.
     next_project_save_request_id: u64,
     last_applied_project_save_request_id: u64,
-    /// A locally persisted dirty snapshot. It is restored only after the user
-    /// explicitly accepts the recovery prompt.
+    /// A native-only persisted dirty snapshot. It is restored only after the
+    /// user explicitly accepts the recovery prompt. Web builds rely on manual
+    /// project downloads instead of size-constrained browser Local Storage.
     recovery_snapshot: Option<String>,
     show_close_confirmation: bool,
     allow_close: bool,
@@ -565,9 +566,9 @@ impl PixelBuddyApp {
         .normalized()
     }
 
-    /// Constructs the app while retaining view preferences and a dirty local
-    /// snapshot. eframe backs both with desktop storage or browser Local
-    /// Storage, while project files remain limited to editable document data.
+    /// Constructs the app while retaining cross-platform view preferences and
+    /// a native-only dirty recovery snapshot. Web projects use explicit
+    /// downloads because browser Local Storage cannot reliably hold them.
     pub fn from_creation_context(
         cc: &eframe::CreationContext<'_>,
         width: u32,
@@ -578,7 +579,10 @@ impl PixelBuddyApp {
         app.tile_mode = preferences.tile_mode;
         app.tile_preview = preferences.tile_preview;
         app.show_timeline = preferences.show_timeline;
-        app.recovery_snapshot = load_recovery_snapshot(cc.storage);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app.recovery_snapshot = load_recovery_snapshot(cc.storage);
+        }
 
         app
     }
@@ -2870,31 +2874,39 @@ impl eframe::App for PixelBuddyApp {
             &self.view_preferences(),
         );
 
-        if self.editor.is_dirty() {
-            match crate::io::project::encode_editor(&self.editor) {
-                Ok(snapshot) if recovery_snapshot_within_budget(snapshot.len()) => {
-                    // One key replacement is the atomic unit exposed by both
-                    // eframe native storage and browser Local Storage.
-                    storage.set_string(RECOVERY_STORAGE_KEY, snapshot);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if self.editor.is_dirty() {
+                match crate::io::project::encode_editor(&self.editor) {
+                    Ok(snapshot) if recovery_snapshot_within_budget(snapshot.len()) => {
+                        // One key replacement is the atomic unit exposed by
+                        // eframe's native persistence backend.
+                        storage.set_string(RECOVERY_STORAGE_KEY, snapshot);
+                    }
+                    Ok(snapshot) => {
+                        storage.set_string(RECOVERY_STORAGE_KEY, String::new());
+                        let message = format!(
+                            "Recovery snapshot is {} bytes, exceeding the {}-byte recovery limit",
+                            snapshot.len(),
+                            crate::io::project::MAX_RECOVERY_SNAPSHOT_BYTES
+                        );
+                        log::error!("{message}");
+                        self.status_message = Some((message, true));
+                    }
+                    Err(error) => {
+                        log::error!("Unable to create local project recovery snapshot: {error}")
+                    }
                 }
-                Ok(snapshot) => {
-                    storage.set_string(RECOVERY_STORAGE_KEY, String::new());
-                    let message = format!(
-                        "Recovery snapshot is {} bytes, exceeding the {}-byte local-storage limit",
-                        snapshot.len(),
-                        crate::io::project::MAX_RECOVERY_SNAPSHOT_BYTES
-                    );
-                    log::error!("{message}");
-                    self.status_message = Some((message, true));
-                }
-                Err(error) => {
-                    log::error!("Unable to create local project recovery snapshot: {error}")
-                }
+            } else {
+                // An explicit project save or discard makes the previous native
+                // recovery snapshot stale.
+                storage.set_string(RECOVERY_STORAGE_KEY, String::new());
             }
-        } else {
-            // An explicit project save or discard makes the previous recovery
-            // snapshot stale, so remove it from both native storage and Web
-            // Local Storage on the next persistence pass.
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Recovery is intentionally native-only. Clear snapshots written
+            // by older Web builds so they no longer consume browser storage.
             storage.set_string(RECOVERY_STORAGE_KEY, String::new());
         }
         storage.flush();
