@@ -143,8 +143,8 @@ impl ActiveEffectState {
         } else {
             EffectTarget::ActiveLayer
         };
-        let gradient_coverage =
-            Self::default_gradient_coverage(effect_type, target, editor.document());
+        let (gradient_coverage, gradient_blend_mode, gradient_blend_strength) =
+            Self::default_gradient_fill_behavior(effect_type, target, editor.document());
         let original_document = Box::new(editor.document().clone());
         let preview_document = original_document.clone();
         Self {
@@ -178,6 +178,8 @@ impl ActiveEffectState {
             gradient: {
                 let mut g = crate::effects::gradient::GradientState {
                     coverage: gradient_coverage,
+                    blend_mode: gradient_blend_mode,
+                    blend_strength: gradient_blend_strength,
                     ..crate::effects::gradient::GradientState::default()
                 };
                 g.stops.clear();
@@ -196,32 +198,65 @@ impl ActiveEffectState {
         }
     }
 
-    fn default_gradient_coverage(
+    fn default_gradient_fill_behavior(
         effect_type: EffectType,
         target: EffectTarget,
         document: &Document,
-    ) -> crate::effects::gradient::GradientCoverage {
+    ) -> (
+        crate::effects::gradient::GradientCoverage,
+        crate::effects::gradient::GradientBlendMode,
+        f32,
+    ) {
+        use crate::effects::gradient::{
+            GradientBlendMode, GradientCoverage, DEFAULT_GRADIENT_BLEND_STRENGTH,
+        };
+
         if effect_type != EffectType::GradientFill {
-            return crate::effects::gradient::GradientCoverage::PaintedPixels;
+            return (
+                GradientCoverage::PaintedPixels,
+                GradientBlendMode::Replace,
+                DEFAULT_GRADIENT_BLEND_STRENGTH,
+            );
         }
 
-        let target_generates_pixels = target == EffectTarget::Selection
-            || !document
-                .active_layer()
-                .canvas
-                .pixels()
-                .chunks_exact(4)
-                .any(|pixel| pixel[3] != 0);
-        if target_generates_pixels {
-            crate::effects::gradient::GradientCoverage::EntireTarget
+        if target == EffectTarget::Selection {
+            return (
+                GradientCoverage::EntireTarget,
+                GradientBlendMode::Replace,
+                DEFAULT_GRADIENT_BLEND_STRENGTH,
+            );
+        }
+
+        let layer_has_content = document
+            .active_layer()
+            .canvas
+            .pixels()
+            .chunks_exact(4)
+            .any(|pixel| pixel[3] != 0);
+        if layer_has_content {
+            (
+                GradientCoverage::PaintedPixels,
+                GradientBlendMode::AlphaBlend,
+                DEFAULT_GRADIENT_BLEND_STRENGTH,
+            )
         } else {
-            crate::effects::gradient::GradientCoverage::PaintedPixels
+            (
+                GradientCoverage::EntireTarget,
+                GradientBlendMode::Replace,
+                DEFAULT_GRADIENT_BLEND_STRENGTH,
+            )
         }
     }
 
-    fn reset_gradient_coverage_for_target(&mut self) {
-        self.gradient.coverage =
-            Self::default_gradient_coverage(self.effect_type, self.target, &self.original_document);
+    fn reset_gradient_fill_behavior_for_target(&mut self) {
+        let (coverage, blend_mode, blend_strength) = Self::default_gradient_fill_behavior(
+            self.effect_type,
+            self.target,
+            &self.original_document,
+        );
+        self.gradient.coverage = coverage;
+        self.gradient.blend_mode = blend_mode;
+        self.gradient.blend_strength = blend_strength;
     }
 
     fn provenance_matches(&self, app: &crate::app::PixelBuddyApp) -> bool {
@@ -1557,6 +1592,7 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                                     crate::effects::gradient::GradientBlendMode::Replace,
                                     "Replace",
                                 )
+                                .on_hover_text("Replace target pixels with gradient colors")
                                 .changed()
                             {
                                 effect_changed = true;
@@ -1565,13 +1601,33 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                                 .radio_value(
                                     &mut effect.gradient.blend_mode,
                                     crate::effects::gradient::GradientBlendMode::AlphaBlend,
-                                    "Alpha Blend",
+                                    "Blend",
                                 )
+                                .on_hover_text("Mix gradient colors into the existing artwork")
                                 .changed()
                             {
                                 effect_changed = true;
                             }
                         });
+
+                        let is_blending = effect.gradient.blend_mode
+                            == crate::effects::gradient::GradientBlendMode::AlphaBlend;
+                        if is_blending
+                            && ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut effect.gradient.blend_strength,
+                                        0.0..=1.0,
+                                    )
+                                    .text("Blend Strength"),
+                                )
+                                .on_hover_text(
+                                    "Control how strongly the gradient mixes with the artwork",
+                                )
+                                .changed()
+                        {
+                            effect_changed = true;
+                        }
                     }
                 }
             }
@@ -1584,10 +1640,10 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                         &mut effect.target,
                         EffectTarget::ActiveLayer,
                         "Active Layer",
-                    )
-                    .changed()
+                )
+                .changed()
                 {
-                    effect.reset_gradient_coverage_for_target();
+                    effect.reset_gradient_fill_behavior_for_target();
                     effect_changed = true;
                 }
                 let selection_available = EffectRegion::for_target(
@@ -1606,7 +1662,7 @@ pub fn show_effect_modal(ctx: &egui::Context, app: &mut crate::app::PixelBuddyAp
                         )
                         .changed()
                     {
-                        effect.reset_gradient_coverage_for_target();
+                        effect.reset_gradient_fill_behavior_for_target();
                         effect_changed = true;
                     }
                 });
@@ -1983,6 +2039,7 @@ mod tests {
         app.start_effect(crate::effects::EffectType::GradientFill);
         if let Some(effect) = &mut app.active_effect {
             effect.gradient.blend_mode = crate::effects::gradient::GradientBlendMode::AlphaBlend;
+            effect.gradient.blend_strength = 1.0;
             effect.gradient.shape = crate::effects::gradient::GradientShape::Linear;
             effect.gradient.stops.clear();
             effect
@@ -2021,6 +2078,18 @@ mod tests {
 
         app.start_effect(crate::effects::EffectType::GradientFill);
         if let Some(effect) = &mut app.active_effect {
+            assert_eq!(
+                effect.gradient.coverage,
+                crate::effects::gradient::GradientCoverage::PaintedPixels
+            );
+            assert_eq!(
+                effect.gradient.blend_mode,
+                crate::effects::gradient::GradientBlendMode::AlphaBlend
+            );
+            assert_eq!(
+                effect.gradient.blend_strength,
+                crate::effects::gradient::DEFAULT_GRADIENT_BLEND_STRENGTH
+            );
             effect.gradient.stops = vec![
                 crate::effects::gradient::GradientStop {
                     position: 0.0,
@@ -2037,8 +2106,44 @@ mod tests {
 
         let canvas = &app.editor.document().active_layer().canvas;
         assert_eq!(canvas.get_pixel(0, 0), source_pixels[0]);
-        assert_eq!(canvas.get_pixel(1, 0), [0, 255, 0, 255]);
-        assert_eq!(canvas.get_pixel(2, 0), [0, 255, 0, 96]);
+        assert_eq!(canvas.get_pixel(1, 0), [128, 128, 0, 255]);
+        assert_eq!(canvas.get_pixel(2, 0), [128, 128, 0, 96]);
+    }
+
+    #[test]
+    fn gradient_fill_default_keeps_detail_in_a_fully_opaque_image() {
+        let mut app = crate::app::PixelBuddyApp::new(2, 1);
+        app.editor
+            .document_mut()
+            .active_layer_mut()
+            .canvas
+            .set_pixel(0, 0, [240, 20, 10, 255]);
+        app.editor
+            .document_mut()
+            .active_layer_mut()
+            .canvas
+            .set_pixel(1, 0, [20, 40, 220, 255]);
+
+        app.start_effect(crate::effects::EffectType::GradientFill);
+        if let Some(effect) = &mut app.active_effect {
+            effect.gradient.stops = vec![
+                crate::effects::gradient::GradientStop {
+                    position: 0.0,
+                    color: [0, 255, 0, 255],
+                },
+                crate::effects::gradient::GradientStop {
+                    position: 1.0,
+                    color: [0, 255, 0, 255],
+                },
+            ];
+            effect.preview_dirty = true;
+        }
+        commit_test_effect(&mut app);
+
+        let canvas = &app.editor.document().active_layer().canvas;
+        assert_eq!(canvas.get_pixel(0, 0), [120, 138, 5, 255]);
+        assert_eq!(canvas.get_pixel(1, 0), [10, 148, 110, 255]);
+        assert_ne!(canvas.get_pixel(0, 0), canvas.get_pixel(1, 0));
     }
 
     #[test]
@@ -2049,6 +2154,10 @@ mod tests {
             effect.gradient.coverage,
             crate::effects::gradient::GradientCoverage::EntireTarget,
             "a blank layer should be immediately fillable"
+        );
+        assert_eq!(
+            effect.gradient.blend_mode,
+            crate::effects::gradient::GradientBlendMode::Replace
         );
         effect.gradient.stops = vec![
             crate::effects::gradient::GradientStop {
@@ -2082,6 +2191,10 @@ mod tests {
             effect.gradient.coverage,
             crate::effects::gradient::GradientCoverage::EntireTarget
         );
+        assert_eq!(
+            effect.gradient.blend_mode,
+            crate::effects::gradient::GradientBlendMode::Replace
+        );
         effect.gradient.stops = vec![
             crate::effects::gradient::GradientStop {
                 position: 0.0,
@@ -2106,7 +2219,7 @@ mod tests {
     }
 
     #[test]
-    fn gradient_fill_target_changes_restore_the_safe_coverage_default() {
+    fn gradient_fill_target_changes_restore_the_safe_behavior_default() {
         let mut editor = crate::editor::EditorState::new(3, 1);
         editor
             .document_mut()
@@ -2119,19 +2232,36 @@ mod tests {
             effect.gradient.coverage,
             crate::effects::gradient::GradientCoverage::EntireTarget
         );
+        assert_eq!(
+            effect.gradient.blend_mode,
+            crate::effects::gradient::GradientBlendMode::Replace
+        );
 
         effect.target = EffectTarget::ActiveLayer;
-        effect.reset_gradient_coverage_for_target();
+        effect.gradient.blend_strength = 0.9;
+        effect.reset_gradient_fill_behavior_for_target();
         assert_eq!(
             effect.gradient.coverage,
             crate::effects::gradient::GradientCoverage::PaintedPixels
         );
+        assert_eq!(
+            effect.gradient.blend_mode,
+            crate::effects::gradient::GradientBlendMode::AlphaBlend
+        );
+        assert_eq!(
+            effect.gradient.blend_strength,
+            crate::effects::gradient::DEFAULT_GRADIENT_BLEND_STRENGTH
+        );
 
         effect.target = EffectTarget::Selection;
-        effect.reset_gradient_coverage_for_target();
+        effect.reset_gradient_fill_behavior_for_target();
         assert_eq!(
             effect.gradient.coverage,
             crate::effects::gradient::GradientCoverage::EntireTarget
+        );
+        assert_eq!(
+            effect.gradient.blend_mode,
+            crate::effects::gradient::GradientBlendMode::Replace
         );
     }
 

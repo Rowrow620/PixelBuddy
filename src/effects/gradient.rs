@@ -1,4 +1,5 @@
 pub const MAX_GRADIENT_STOPS: usize = 32;
+pub const DEFAULT_GRADIENT_BLEND_STRENGTH: f32 = 0.5;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum GradientShape {
@@ -66,6 +67,8 @@ pub struct GradientState {
     pub edge_mode: GradientEdgeMode,
     pub dithering: GradientDithering,
     pub blend_mode: GradientBlendMode,
+    /// Strength of `AlphaBlend`. `Replace` deliberately ignores this value.
+    pub blend_strength: f32,
     pub coverage: GradientCoverage,
     // Linear specific
     pub linear_start: [f32; 2],
@@ -97,6 +100,7 @@ impl Default for GradientState {
             edge_mode: GradientEdgeMode::Clamp,
             dithering: GradientDithering::None,
             blend_mode: GradientBlendMode::Replace,
+            blend_strength: DEFAULT_GRADIENT_BLEND_STRENGTH,
             coverage: GradientCoverage::PaintedPixels,
             linear_start: [0.0, 0.5],
             linear_end: [1.0, 0.5],
@@ -120,39 +124,21 @@ impl GradientState {
             }
             GradientBlendMode::Replace => sampled,
             GradientBlendMode::AlphaBlend if preserve_alpha => {
-                let sampled_alpha = sampled[3] as f32 / 255.0;
-                let mix_channel = |sampled_channel: u8, original_channel: u8| {
-                    (sampled_channel as f32 * sampled_alpha
-                        + original_channel as f32 * (1.0 - sampled_alpha))
-                        .clamp(0.0, 255.0) as u8
-                };
-                [
-                    mix_channel(sampled[0], original[0]),
-                    mix_channel(sampled[1], original[1]),
-                    mix_channel(sampled[2], original[2]),
-                    original[3],
-                ]
+                let mut blended = crate::document::Layer::blend_mode_apply(
+                    [original[0], original[1], original[2], 255],
+                    sampled,
+                    crate::document::BlendMode::Normal,
+                    self.blend_strength,
+                );
+                blended[3] = original[3];
+                blended
             }
-            GradientBlendMode::AlphaBlend => {
-                let sampled_alpha = sampled[3] as f32 / 255.0;
-                let original_alpha = original[3] as f32 / 255.0;
-                let output_alpha = sampled_alpha + original_alpha * (1.0 - sampled_alpha);
-                if output_alpha <= 0.0 {
-                    [0, 0, 0, 0]
-                } else {
-                    let blend_channel = |sampled_channel: u8, original_channel: u8| {
-                        ((sampled_channel as f32 * sampled_alpha)
-                            + (original_channel as f32 * original_alpha * (1.0 - sampled_alpha)))
-                            / output_alpha
-                    };
-                    [
-                        blend_channel(sampled[0], original[0]).clamp(0.0, 255.0) as u8,
-                        blend_channel(sampled[1], original[1]).clamp(0.0, 255.0) as u8,
-                        blend_channel(sampled[2], original[2]).clamp(0.0, 255.0) as u8,
-                        (output_alpha * 255.0).clamp(0.0, 255.0) as u8,
-                    ]
-                }
-            }
+            GradientBlendMode::AlphaBlend => crate::document::Layer::blend_mode_apply(
+                original,
+                sampled,
+                crate::document::BlendMode::Normal,
+                self.blend_strength,
+            ),
         };
 
         Some(output)
@@ -174,6 +160,8 @@ impl GradientState {
             .all(|value| (0.0..=1.0).contains(&value));
         if !geometry_is_finite
             || !normalized_geometry_is_bounded
+            || !self.blend_strength.is_finite()
+            || !(0.0..=1.0).contains(&self.blend_strength)
             || self
                 .radial_radius
                 .iter()
@@ -366,8 +354,13 @@ mod tests {
         };
 
         assert_eq!(
+            gradient.compose_fill_pixel([200, 0, 0, 96], [0, 0, 200, 255]),
+            Some([100, 0, 100, 96])
+        );
+        assert_eq!(
             gradient.compose_fill_pixel([200, 0, 0, 96], [0, 0, 200, 128]),
-            Some([99, 0, 100, 96])
+            Some([150, 0, 50, 96]),
+            "stop alpha and blend strength should multiply"
         );
     }
 
@@ -380,12 +373,67 @@ mod tests {
         };
 
         assert_eq!(
-            gradient.compose_fill_pixel([255, 0, 0, 128], [0, 255, 0, 128]),
-            Some([84, 170, 0, 191])
+            gradient.compose_fill_pixel([255, 0, 0, 128], [0, 255, 0, 255]),
+            Some([85, 170, 0, 192])
         );
         assert_eq!(
-            gradient.compose_fill_pixel([9, 8, 7, 0], [1, 2, 3, 128]),
+            gradient.compose_fill_pixel([9, 8, 7, 0], [1, 2, 3, 255]),
             Some([1, 2, 3, 128])
+        );
+    }
+
+    #[test]
+    fn alpha_blend_strength_endpoints_are_exact() {
+        let original = [19, 37, 83, 96];
+        let sampled = [200, 150, 100, 255];
+        let mut painted = GradientState {
+            blend_mode: GradientBlendMode::AlphaBlend,
+            blend_strength: 0.0,
+            ..GradientState::default()
+        };
+
+        assert_eq!(
+            painted.compose_fill_pixel(original, sampled),
+            Some(original)
+        );
+        painted.blend_strength = 1.0;
+        assert_eq!(
+            painted.compose_fill_pixel(original, sampled),
+            Some([200, 150, 100, 96])
+        );
+
+        let entire_target = GradientState {
+            coverage: GradientCoverage::EntireTarget,
+            blend_mode: GradientBlendMode::AlphaBlend,
+            blend_strength: 0.0,
+            ..GradientState::default()
+        };
+        assert_eq!(
+            entire_target.compose_fill_pixel([9, 8, 7, 0], sampled),
+            Some([9, 8, 7, 0]),
+            "zero strength must preserve hidden transparent RGB bytes"
+        );
+    }
+
+    #[test]
+    fn replace_ignores_blend_strength() {
+        let painted = GradientState {
+            blend_strength: 0.1,
+            ..GradientState::default()
+        };
+        assert_eq!(
+            painted.compose_fill_pixel([200, 0, 0, 96], [0, 255, 0, 128]),
+            Some([0, 255, 0, 96])
+        );
+
+        let entire_target = GradientState {
+            coverage: GradientCoverage::EntireTarget,
+            blend_strength: 0.1,
+            ..GradientState::default()
+        };
+        assert_eq!(
+            entire_target.compose_fill_pixel([200, 0, 0, 96], [0, 255, 0, 128]),
+            Some([0, 255, 0, 128])
         );
     }
 
@@ -422,6 +470,14 @@ mod tests {
         let mut non_finite = GradientState::default();
         non_finite.stops[0].position = f32::NAN;
         assert!(!non_finite.prepare_for_preview());
+
+        for invalid_strength in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
+            let mut invalid = GradientState {
+                blend_strength: invalid_strength,
+                ..GradientState::default()
+            };
+            assert!(!invalid.prepare_for_preview());
+        }
 
         let mut excessive = GradientState {
             stops: (0..=MAX_GRADIENT_STOPS)
