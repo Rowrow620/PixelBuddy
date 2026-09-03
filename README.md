@@ -1,6 +1,6 @@
 # PixelBuddy
 
-[![Play Online in Browser](https://img.shields.io/badge/Play_Online-WebAssembly-blue?style=for-the-badge&logo=webassembly)](https://rowrow620.github.io/PixelBuddy/)
+[![Try it out](https://img.shields.io/badge/Try_it_out-blue?style=for-the-badge&logo=webassembly&logoColor=white)](https://rowrow620.github.io/PixelBuddy/)
 
 <img width="1172" height="938" alt="{4F60DFA3-7A82-482D-8406-C7A57A6549A8}" src="https://github.com/user-attachments/assets/dee7deda-a30d-44b5-a5df-e4d5376af8a3" />
 
